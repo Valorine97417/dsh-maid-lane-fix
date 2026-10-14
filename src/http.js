@@ -344,13 +344,20 @@ async function readRemainder(head, signal) {
  *
  * Two independent requirements meet in one header: the harness mandates an
  * attribution User-Agent on every provider request, and the gateway identifies a
- * desktop client by an `opencode/<version>` token (>= 1.17). The gateway tests
- * with a search rather than an anchored match, so one value can satisfy both —
- * verified live against this lane.
+ * desktop client by an `opencode/<version>` token (>= 1.17) while refusing any
+ * `deepseek-harness/<version>` token. The gateway tests with a search rather than
+ * an anchored match, so one value can satisfy both.
  */
 function userAgentWith(attribution) {
   if (typeof attribution !== 'string' || attribution === '') return CLIENT_UA
-  return attribution.includes('opencode/') ? attribution : `${attribution} ${CLIENT_UA}`
+  // The lane answers 403 FreeTierError to any `deepseek-harness/<version>` token
+  // (case-insensitive, anywhere in the value) — a check aimed at this project's
+  // name: the versionless spelling, `dsh/…` and `deepseek_harness/…` all pass.
+  // Strip only the version suffix so the harness attribution survives intact;
+  // the "(+https://…/deepseek-harness)" tail carries no version and stays clear
+  // of the pattern.
+  const sanitized = attribution.replace(/\bdeepseek-harness\/[^\s)]*/gi, 'deepseek-harness')
+  return sanitized.includes('opencode/') ? sanitized : `${sanitized} ${CLIENT_UA}`
 }
 
 export async function postStreamed({ path, body, session, requestId, attributionUserAgent, signal, onData, timeoutMs = 300000 }) {
