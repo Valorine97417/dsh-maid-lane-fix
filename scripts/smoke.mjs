@@ -72,15 +72,22 @@ check('同一输入派生同一输出（可重复）', normalizeRequestId(dirtyR
 check('不合形的 id 一律拒绝', normalizeSessionId('ses_short') === null && normalizeRequestId('msg_short') === null)
 check('已合规的会话 id 原样放行（不重复改写）', normalizeSessionId(`ses_${sesHex}${TAIL}`) === null)
 
-// ── UA：剥版本、留归属；不该动手时一个字都不改 ──
+// ── UA：两件事同时在（剥版本号 + 令牌在场）；不该动手时一个字都不改 ──
 const harnessUA = 'deepseek-harness/0.1.7 (+https://github.com/deepseek-ai/deepseek-harness) opencode/1.18.31'
 const fixedUA = normalizeUserAgent(harnessUA)
 check('UA 剥掉版本号', typeof fixedUA === 'string' && !/deepseek-harness\//.test(fixedUA), String(fixedUA))
 check('UA 保留归属本身（harness 要求在场）', fixedUA?.includes('deepseek-harness') === true, String(fixedUA))
 check('UA 保留 opencode 令牌（网关认这个）', fixedUA?.includes('opencode/1.18.31') === true, String(fixedUA))
 check('UA 大小写变体也剥', /^deepseek-harness /i.test(normalizeUserAgent('DeepSeek-Harness/1.0 opencode/1.18.31') ?? ''), String(normalizeUserAgent('DeepSeek-Harness/1.0 opencode/1.18.31')))
-check('UA 无版本号时不动（返回 null）', normalizeUserAgent('deepseek-harness (+https://x) opencode/1.18.31') === null)
-check('UA 里没有该串时不动', normalizeUserAgent('dsh/0.1.7 opencode/1.18.31') === null)
+// 这道门的第二半（实测出来的）：光剥版本号不够，令牌必须在场。
+const noToken = 'deepseek-harness/0.1.7 (+https://github.com/deepseek-ai/deepseek-harness)'
+const fixedNoToken = normalizeUserAgent(noToken)
+check('缺令牌时由本层补上（不能只剥版本号）', fixedNoToken?.includes('opencode/') === true, String(fixedNoToken))
+check('补令牌后仍不含带版本的归属', !/deepseek-harness\//.test(fixedNoToken ?? ''), String(fixedNoToken))
+check('归属本身仍在（补令牌不等于删归属）', fixedNoToken?.includes('deepseek-harness') === true, String(fixedNoToken))
+check('已合规且带令牌的归属 UA 不动', normalizeUserAgent('deepseek-harness (+https://x) opencode/1.18.31') === null)
+check('干净 UA 不动', normalizeUserAgent('opencode/1.18.31') === null)
+check('dsh 前缀不动（上游放行这一族）', normalizeUserAgent('dsh/0.1.7 opencode/1.18.31') === null)
 check('空 UA 不动', normalizeUserAgent('') === null)
 
 // ── 系综：normalizedHeaders 只碰车道、只碰该碰的 ──
