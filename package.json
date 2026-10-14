@@ -1,7 +1,7 @@
 {
   "name": "dsh-maid-lane-fix",
-  "description": "DSH 小困插件 · 免费车道中间层：给第三方插件的出网请求套一层规范化（会话 id 时间编码 + User-Agent 归属写法），不动上游一个字节，升级也冲不掉。",
-  "version": "0.1.1",
+  "description": "DSH 小困插件 · 免费车道中间层与上游补丁器：给 dsh-our-free-model 的出网请求套一层指纹规范化（会话 id 时间编码 + User-Agent 归属写法），并用可重放、可回滚的补丁器修好 EAC 通道测不出首字延迟的问题。",
+  "version": "0.2.0",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
@@ -14,11 +14,15 @@
     "fingerprint",
     "lane",
     "proxy",
-    "fetch"
+    "fetch",
+    "eac",
+    "ttft",
+    "sse"
   ],
   "files": [
     "index.js",
     "lib",
+    "scripts",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
@@ -26,6 +30,7 @@
   "exports": {
     ".": "./index.js",
     "./lib/lane.js": "./lib/lane.js",
+    "./lib/ofm-patch.js": "./lib/ofm-patch.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },

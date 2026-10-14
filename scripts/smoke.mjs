@@ -138,11 +138,50 @@ check('卸载后恢复原 fetch', globalThis.fetch === fakeOriginal)
 check('卸载后标记已清', globalThis[INSTALL_MARK] === undefined)
 globalThis.fetch = originalFetch
 
+// ── 上游补丁集：锚点唯一、幂等、失配即中止 ──
+// 重点在"补丁器不会改错地方"。合成用例随包跑；真实上游原文用 OFM_DIR 指过去，
+// 没指就跳过（本仓库不存上游副本）。
+{
+  const { PATCHES, applyPatchSet, inspectPatchSet, patchStatus, PATCHED_FILES } = await import('../lib/ofm-patch.js')
+
+  check('补丁集非空且每处都有 why', PATCHES.length > 0 && PATCHES.every(p => Array.isArray(p.why) && p.why.length > 0))
+  check('每处补丁 id 唯一', new Set(PATCHES.map(p => p.id)).size === PATCHES.length)
+  check('每处补丁都声明 file 与 marker', PATCHES.every(p => typeof p.file === 'string' && typeof p.marker === 'string' && p.marker.length > 0))
+  check('marker 不在 from 里（否则"已应用"会立刻误判）', PATCHES.every(p => !p.from.includes(p.marker)), PATCHES.filter(p => p.from.includes(p.marker)).map(p => p.id).join())
+
+  const synth = {}
+  for (const p of PATCHES) synth[p.file] = `${synth[p.file] ?? ''}${p.from}\n`
+  const once = applyPatchSet(synth)
+  check('合成输入：全部 ready', once.report.every(r => r.status === 'ready'), JSON.stringify(once.report.map(r => r.status)))
+  check('合成输入：替换后 marker 全部命中', PATCHES.every(p => once.files[p.file].includes(p.marker)))
+  const twice = applyPatchSet(once.files)
+  check('幂等：第二次全部 applied、零改动', twice.report.every(r => r.status === 'applied') && PATCHED_FILES.every(f => twice.files[f] === once.files[f]))
+
+  // 破坏必须落在"还没打过补丁"的原文上：对着已应用的文本做替换会空转，
+  // 锚点其实还在原地，这种用例会假绿（第一次就栽在这）。
+  const first = PATCHES[0]
+  const broken = { ...synth, [first.file]: synth[first.file].replace(first.from, 'something else entirely') }
+  check('用例自检｜破坏后锚点确实不在了', !broken[first.file].includes(first.from))
+  let threw = false
+  try { applyPatchSet(broken) } catch { threw = true }
+  check('锚点失配时整批中止（不写一半）', threw)
+  check('inspectPatchSet 对缺文件报 missing-file', inspectPatchSet({})[0].status === 'missing-file')
+  check('patchStatus 对无关文本报 anchor-lost', patchStatus(first, 'nothing relevant here') === 'anchor-lost')
+
+  const upstream = process.env.OFM_DIR ?? null
+  if (upstream !== null) {
+    const real = {}
+    for (const name of PATCHED_FILES) real[name] = readFileSync(`${upstream}/${name}`, 'utf8')
+    const rows = inspectPatchSet(real)
+    check('真实上游：全部已应用', rows.every(r => r.status === 'applied'), JSON.stringify(rows.map(r => `${r.id}=${r.status}`)))
+  }
+}
+
 // ── 清单/契约 ──
 const pkg = JSON.parse(readFileSync(root('package.json'), 'utf8'))
 check('包名 dsh-maid-lane-fix', pkg.name === 'dsh-maid-lane-fix', pkg.name)
-check('version 0.1.1', pkg.version === '0.1.1', pkg.version)
-check('files 白名单含 lib 与 patch', Array.isArray(pkg.files) && pkg.files.includes('lib') && pkg.files.includes('cordis.patch.yml'))
+check('version 0.2.0', pkg.version === '0.2.0', pkg.version)
+check('files 白名单含 lib、scripts 与 patch', Array.isArray(pkg.files) && pkg.files.includes('lib') && pkg.files.includes('scripts') && pkg.files.includes('cordis.patch.yml'))
 check('dsh.bundle.patch 指向本包 patch', pkg.dsh?.bundle?.patch === './cordis.patch.yml')
 check('peer 只有 cordis（零运行时依赖）', Object.keys(pkg.peerDependencies ?? {}).join() === '@deepseek-ai/cordis')
 check('无运行时 dependencies（宿主侧纯修补）', pkg.dependencies === undefined)
