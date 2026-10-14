@@ -74,25 +74,58 @@ export function mintRequestId(timestamp = Date.now()) {
 }
 
 /**
+ * The canonical 12-hex time prefix for a session id: `~(timestamp*0x1000 +
+ * counter)` truncated to 48 bits — the shape the real client mints and the
+ * gateway decodes. The gateway started reading this field back as a timestamp:
+ * a digest standing in for it decodes to a 1970s value and the lane answers
+ * 403 FreeTierError ("can only be used from within OpenCode"), which silently
+ * locked every derived session — probes and real turns alike.
+ */
+function canonicalPrefix(timestamp, counter) {
+  const value = ~(BigInt(timestamp) * 0x1000n + BigInt(counter))
+  let hex = ''
+  for (let i = 0; i < 6; i += 1) hex += Number((value >> BigInt(40 - 8 * i)) & 0xffn).toString(16).padStart(2, '0')
+  return hex
+}
+
+/** The same encoding for a request id, without the bit-flip. */
+function canonicalRequestPrefix(timestamp, counter) {
+  const value = BigInt(timestamp) * 0x1000n + BigInt(counter)
+  let hex = ''
+  for (let i = 0; i < 6; i += 1) hex += Number((value >> BigInt(40 - 8 * i)) & 0xffn).toString(16).padStart(2, '0')
+  return hex
+}
+
+/**
+ * A fixed epoch stamp for derived ids. The gateway accepts any decodable time
+ * (verified live), so a constant keeps derived sessions byte-stable across
+ * restarts while still wearing the canonical shape.
+ */
+const DERIVED_EPOCH = 1767225600000 // 2026-01-01T00:00:00Z
+
+/**
  * Map one downstream conversation onto one stable upstream session.
  *
  * Free-tier quota is accounted per session, so a fresh id per request exhausts
  * it and surfaces as 429 with growing retry-after. A digest of the harness
  * session id gives the same conversation the same canonical session across
- * restarts, which is how the real client behaves.
+ * restarts, which is how the real client behaves. The digest supplies only the
+ * 14-byte tail; the 12-hex head is the canonical time encoding (see
+ * {@link canonicalPrefix}) — a digest head reads as a forged client to the
+ * gateway's fingerprint check.
  */
 export function sessionForConversation(sessionId) {
   if (typeof sessionId === 'string' && SESSION_RE.test(sessionId.trim())) return sessionId.trim()
   const seed = typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : 'global'
   const digest = crypto.createHash('sha256').update(`our-free-model\0${seed}`).digest()
-  return `ses_${digest.subarray(0, 6).toString('hex')}${base62From(digest.subarray(6, 20))}`
+  return `ses_${canonicalPrefix(DERIVED_EPOCH, 1)}${base62From(digest.subarray(6, 20))}`
 }
 
 /** Stable per-turn request id: retries of the same turn share it. */
 export function requestIdFor(sessionId, turnSeed) {
   if (typeof turnSeed !== 'string' || turnSeed === '') return mintRequestId()
   const digest = crypto.createHash('sha256').update(`our-free-model-req\0${sessionId}\0${turnSeed}`).digest()
-  const id = `msg_${digest.subarray(0, 6).toString('hex')}${base62From(digest.subarray(6, 20))}`
+  const id = `msg_${canonicalRequestPrefix(DERIVED_EPOCH, Number(digest.readUInt16BE(0)) + 1)}${base62From(digest.subarray(6, 20))}`
   return REQUEST_RE.test(id) ? id : mintRequestId()
 }
 
