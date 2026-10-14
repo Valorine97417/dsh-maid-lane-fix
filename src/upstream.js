@@ -125,7 +125,7 @@ export function sessionForConversation(sessionId) {
 export function requestIdFor(sessionId, turnSeed) {
   if (typeof turnSeed !== 'string' || turnSeed === '') return mintRequestId()
   const digest = crypto.createHash('sha256').update(`our-free-model-req\0${sessionId}\0${turnSeed}`).digest()
-  const id = `msg_${canonicalRequestPrefix(DERIVED_EPOCH, Number(digest.readUInt16BE(0)) + 1)}${base62From(digest.subarray(6, 20))}`
+  const id = `msg_${canonicalRequestPrefix(DERIVED_EPOCH, Number(digest.readUInt16BE(0)) & 0xfff)}${base62From(digest.subarray(6, 20))}`
   return REQUEST_RE.test(id) ? id : mintRequestId()
 }
 
