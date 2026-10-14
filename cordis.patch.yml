@@ -1,0 +1,6 @@
+# dsh-maid-lane-fix bundle patch
+# 只插本插件自身一行——中间层是纯宿主侧的进程级修补，没有客户端半边、不注册路由，
+# 也不需要任何服务（inject 空数组），所以这里没有 config。
+- insert:
+    - id: lane-fix
+      name: 'dsh-maid-lane-fix'

@@ -1,0 +1,40 @@
+{
+  "name": "dsh-maid-lane-fix",
+  "description": "DSH 小困插件 · 免费车道中间层：给第三方插件的出网请求套一层规范化（会话 id 时间编码 + User-Agent 归属写法），不动上游一个字节，升级也冲不掉。",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "free-tier",
+    "opencode",
+    "fingerprint",
+    "lane",
+    "proxy",
+    "fetch"
+  ],
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./lib/lane.js": "./lib/lane.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
