@@ -8,11 +8,18 @@ import {
   normalizeSessionId,
   normalizeRequestId,
   normalizeUserAgent,
+  normalizeLanePath,
+  normalizeTools,
   normalizedHeaders,
+  normalizedRequest,
   isLaneUrl,
   installLaneFix,
   INSTALL_MARK,
   DERIVED_EPOCH,
+  REQUIRED_TOOLS,
+  FINGERPRINT_TOOLS,
+  LANE_PATH_FROM,
+  LANE_PATH_TO,
 } from '../lib/lane.js'
 
 let pass = 0
@@ -90,7 +97,58 @@ check('干净 UA 不动', normalizeUserAgent('opencode/1.18.31') === null)
 check('dsh 前缀不动（上游放行这一族）', normalizeUserAgent('dsh/0.1.7 opencode/1.18.31') === null)
 check('空 UA 不动', normalizeUserAgent('') === null)
 
-// ── 系综：normalizedHeaders 只碰车道、只碰该碰的 ──
+// ── 端点地址：老 /zen/v1 改写成新 /inference/v1（PR #330 逐格实测的那道门）──
+check('老端点被改写', normalizeLanePath('/zen/v1/chat/completions') === '/inference/v1/chat/completions', String(normalizeLanePath('/zen/v1/chat/completions')))
+check('新端点不动（幂等）', normalizeLanePath('/inference/v1/chat/completions') === null)
+check('别的路径不碰', normalizeLanePath('/v1/models') === null)
+check('空值不炸', normalizeLanePath(undefined) === null)
+check('改写常量成对', LANE_PATH_FROM === '/zen/v1/' && LANE_PATH_TO === '/inference/v1/')
+
+// ── 工具指纹：bash 与 read 必须同时在、且各带至少一个 property（PR #330）──
+const nested = (name, props) => ({ type: 'function', function: { name, description: 'x', parameters: { type: 'object', properties: props } } })
+{
+  const onlyBash = { tools: [nested('bash', { command: { type: 'string' } })] }
+  const c1 = normalizeTools(onlyBash)
+  check('只有 bash → 补 read', onlyBash.tools.some(t => t.function.name === 'read'), JSON.stringify(c1))
+  check('补进来的 read 带 property', Object.keys(onlyBash.tools.find(t => t.function.name === 'read').function.parameters.properties).length > 0)
+
+  const emptyProps = { tools: [nested('bash', {}), nested('read', {})] }
+  const c2 = normalizeTools(emptyProps)
+  check('properties 为空 → 各补一个 property',
+    Object.keys(emptyProps.tools[0].function.parameters.properties).length > 0
+    && Object.keys(emptyProps.tools[1].function.parameters.properties).length > 0, JSON.stringify(c2))
+
+  const good = { tools: FINGERPRINT_TOOLS.map(n => nested(n, { input: { type: 'string' } })) }
+  check('已合规的工具集 → 不动（空操作）', normalizeTools(good).length === 0, JSON.stringify(normalizeTools(good)))
+  check('四个工具都在 → 也不补 tool_choice（有客户端工具）', good.tool_choice === undefined)
+
+  const none = { messages: [] }
+  check('没有 tools → 不动（不凭空造）', normalizeTools(none).length === 0)
+
+  const noClientTools = { tools: [] }
+  normalizeTools(noClientTools)
+  check('无客户端工具时 tool_choice 锁成 none', noClientTools.tool_choice === 'none', JSON.stringify(noClientTools.tool_choice))
+  check('无客户端工具时四个指纹工具全补上',
+    FINGERPRINT_TOOLS.every(n => noClientTools.tools.some(t => t.function.name === n)),
+    noClientTools.tools.map(t => t.function.name).join())
+
+  const claudeShape = { tools: [{ name: 'bash', description: 'x', input_schema: { type: 'object', properties: {} } }] }
+  normalizeTools(claudeShape)
+  check('Anthropic 形态：补 input_schema property',
+    Object.keys(claudeShape.tools[0].input_schema.properties).length > 0)
+  check('Anthropic 形态：诱饵也用 input_schema', claudeShape.tools.every(t => t.input_schema !== undefined))
+  check('必查工具表就是 bash 与 read', REQUIRED_TOOLS.join() === 'bash,read')
+
+  const flatShape = { tools: [{ type: 'function', name: 'bash', description: 'x', parameters: { type: 'object', properties: {} } }] }
+  normalizeTools(flatShape)
+  check('拍平形态：补 parameters property', Object.keys(flatShape.tools[0].parameters.properties).length > 0)
+
+  const idempotent = { tools: [nested('bash', {}), nested('read', {})] }
+  normalizeTools(idempotent)
+  check('工具指纹幂等（第二次零改动）', normalizeTools(idempotent).length === 0)
+}
+
+// ── 系综：normalizedRequest 只碰车道、只碰该碰的 ──
 const lane = 'https://opencode.ai/zen/v1/chat/completions'
 check('车道 URL 识别', isLaneUrl(lane) === true)
 check('非车道 URL 不认', isLaneUrl('https://example.com/x') === false)
@@ -101,17 +159,40 @@ const dirtyInit = {
   headers: { 'content-type': 'application/json', 'x-opencode-session': dirtySession, 'x-opencode-request': dirtyRequest, 'user-agent': harnessUA },
 }
 const out = normalizedHeaders(lane, dirtyInit)
-check('脏三头 → 产出改写后的头', out !== null && out.changes.length === 3, JSON.stringify(out?.changes))
+check('脏头 + 老端点 → 产出五项改写（地址/会话/session-id/请求/UA）', out !== null && out.changes.length === 5, JSON.stringify(out?.changes))
 check('改写只发生在副本上（原对象未被改）',
   dirtyInit.headers['x-opencode-session'] === dirtySession && dirtyInit.headers['user-agent'] === harnessUA)
 check('改写后的头里没有带版本的 UA', !/deepseek-harness\//.test(out?.headers.get('user-agent') ?? ''))
 check('无关头原样保留', out?.headers.get('content-type') === 'application/json')
-check('已合规的请求 → 返回 null（空操作）',
-  normalizedHeaders(lane, { headers: { 'x-opencode-session': `ses_${sesHex}qwertyuiopasdfgh`, 'user-agent': 'opencode/1.18.31' } }) === null)
 check('非车道主机 → 返回 null（绝不越界）',
   normalizedHeaders('https://example.com/x', dirtyInit) === null)
 check('无车道标记头 → 返回 null（不猜）',
   normalizedHeaders(lane, { headers: { 'user-agent': harnessUA } }) === null)
+
+// 全合规的请求必须原样放行：五道门全过才叫"空操作"。
+const cleanInit = {
+  headers: {
+    'x-opencode-session': `ses_${sesHex}qwertyuiopasdfgh`,
+    'x-opencode-session-id': `ses_${sesHex}qwertyuiopasdfgh`,
+    'x-opencode-request': `msg_${reqHex}qwertyuiopasdfgh`,
+    'user-agent': 'opencode/1.18.31',
+  },
+}
+check('已合规且地址已在新端点 → 返回 null（空操作）',
+  normalizedRequest(`${lane.replace('/zen/v1/', '/inference/v1/')}`, cleanInit) === null)
+check('已合规但地址还在老端点 → 只改地址（那道门单独存在）',
+  JSON.stringify(normalizedRequest(lane, cleanInit)?.changes) === JSON.stringify(['/zen/v1/→/inference/v1/']),
+  JSON.stringify(normalizedRequest(lane, cleanInit)?.changes))
+check('缺 x-opencode-session-id → 补上（PR #330 那道门）',
+  normalizedHeaders(lane, { headers: { 'x-opencode-session': `ses_${sesHex}qwertyuiopasdfgh`, 'user-agent': 'opencode/1.18.31' } })
+    ?.headers.get('x-opencode-session-id') === `ses_${sesHex}qwertyuiopasdfgh`)
+check('session-id 补的是规范化**之后**的会话值（不能补旧值）',
+  (() => {
+    const r = normalizedRequest(lane, { headers: { 'x-opencode-session': dirtySession, 'user-agent': 'opencode/1.18.31' } })
+    return r !== null && r.headers.get('x-opencode-session-id') === r.headers.get('x-opencode-session')
+  })())
+check('端点改写走 normalizedRequest（头没毛病时也照改）',
+  normalizedRequest(lane, { headers: { 'x-opencode-session': dirtySession } })?.url.includes('/inference/v1/chat/completions') === true)
 
 // ── 挂载：装得上、拦得住、卸得干净、重复装不叠层 ──
 const calls = []
@@ -128,10 +209,23 @@ check('重复挂载复用已有层（不叠 wrapper）', again.installed === fal
 await globalThis.fetch(lane, { method: 'POST', headers: { ...dirtyInit.headers } })
 check('车道请求被拦下并改写', calls.length === 1 && calls[0].init.headers instanceof Headers, JSON.stringify(calls.length))
 check('拦下的请求头已合规', looksTimeEncoded(calls[0].init.headers.get('x-opencode-session').slice(4, 16), true))
+check('拦下的请求 URL 已换到新端点', calls[0].url.includes('/inference/v1/chat/completions'), calls[0].url)
+check('拦下的请求补了 session-id 且与会话头同值',
+  calls[0].init.headers.get('x-opencode-session-id') === calls[0].init.headers.get('x-opencode-session'))
 check('统计计数涨了', handle.stats().rewrites === 1, JSON.stringify(handle.stats()))
 
 await globalThis.fetch('https://example.com/keep', { headers: { 'x-opencode-session': dirtySession } })
 check('非车道请求原样透传（init 未被包装）', calls.length === 2 && calls[1].init.headers['x-opencode-session'] === dirtySession)
+
+// 带 body 的整链：工具指纹也在 wrapper 里生效。
+await globalThis.fetch(lane, {
+  method: 'POST',
+  headers: { ...dirtyInit.headers },
+  body: JSON.stringify({ model: 'cat-jam-free', tools: [{ type: 'function', function: { name: 'bash', description: 'x', parameters: { type: 'object', properties: {} } } }] }),
+})
+const sentBody = JSON.parse(calls[2].init.body)
+check('wrapper 里工具指纹也生效（read 补进来了）', sentBody.tools.some(t => t.function.name === 'read'), calls[2].init.body.slice(0, 120))
+check('wrapper 里 bash 的 schema 被补上 property', Object.keys(sentBody.tools.find(t => t.function.name === 'bash').function.parameters.properties).length > 0)
 
 handle.uninstall()
 check('卸载后恢复原 fetch', globalThis.fetch === fakeOriginal)
@@ -180,7 +274,7 @@ globalThis.fetch = originalFetch
 // ── 清单/契约 ──
 const pkg = JSON.parse(readFileSync(root('package.json'), 'utf8'))
 check('包名 dsh-maid-lane-fix', pkg.name === 'dsh-maid-lane-fix', pkg.name)
-check('version 0.2.0', pkg.version === '0.2.0', pkg.version)
+check('version 0.3.0', pkg.version === '0.3.0', pkg.version)
 check('files 白名单含 lib、scripts 与 patch', Array.isArray(pkg.files) && pkg.files.includes('lib') && pkg.files.includes('scripts') && pkg.files.includes('cordis.patch.yml'))
 check('dsh.bundle.patch 指向本包 patch', pkg.dsh?.bundle?.patch === './cordis.patch.yml')
 check('peer 只有 cordis（零运行时依赖）', Object.keys(pkg.peerDependencies ?? {}).join() === '@deepseek-ai/cordis')

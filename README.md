@@ -2,19 +2,24 @@
 
 DSH 小困插件 · **免费车道中间层 + 上游补丁器**：修 [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model) 的两类毛病——出网指纹被 `opencode.ai` 拦（中间层负责，**不动上游一个字节**），以及 EAC 通道测不出首字延迟（补丁器负责，**可重放、可回滚**）。
 
-## 一、中间层：三道指纹门
+## 一、中间层：五道指纹门
 
-`opencode.ai` 的免密车道会给第三方客户端上**三道指纹门**，三道都过才放行。上游 2.1.0／2.2.0 前两道都不满足，于是整条车道（探测 + 真实对话）全部 `403 FreeTierError`：
+`opencode.ai` 的免密车道会给第三方客户端上**五道指纹门**，五道都过才放行。上游 2.1.0 一道都不满足；2.2.0 的 `v2.2.0` 标签同样一道都不满足（`/zen/v1` 只修了 UA 那道），于是整条车道（探测 + 真实对话）全部 `403 FreeTierError`：
 
 | 门 | 判据 | 上游为什么踩中 |
 | --- | --- | --- |
+| 端点地址 | 必须走 `/inference/v1/*`；`/zen/v1/*` 即使其余四道全对也 403（两套地址返回**同一份** 85 个模型清单） | 2.2.0 及以前都在打 `/zen/v1` |
+| `x-opencode-session-id` | 必须**存在**且与 `x-opencode-session` 同值；缺了即 403 | 2.2.0 及以前只发 `x-opencode-session` |
 | 会话/请求 id | `x-opencode-session` / `x-opencode-request` 去掉前缀后 12 位 hex 的**低 12 位**是客户端自己的序号位（会话头取反） | 插件用 sha256 摘要冒充，序号位是随机的 → 撞不进那一族 |
 | User-Agent | 出现 `deepseek-harness/<版本号>` 这个**词+斜杠+版本**的组合即拒；大写、下划线、词嵌在别处同样拒。裸词 `deepseek-harness` + `opencode/` 反而放行 | harness 要求归属 UA 必须在场，而插件的回退值恰好是 `deepseek-harness/0.1.7 (…)` —— 正好被点名 |
-| body.tools | 必须含 `bash`/`glob`/`grep`/`read` **且带 `tool_choice`** | **上游自己处理**（`src/upstream.js` 的 `applyFingerprint`），本层不插手 |
+| body.tools | `bash` 与 `read` 必须**同时**声明，且各自 schema 至少一个 property（只其一 → 403，`properties: {}` → 403） | 上游 `applyFingerprint` 处理了工具名，但**没有**保证 `read` 在场、也没保证 schema 非空 |
 
-本插件在启动时包一层 `globalThis.fetch`，只对发往车道的请求把前两项规范化，其余原样透传。
+本插件在启动时包一层 `globalThis.fetch`，只对发往车道的请求把前四道（地址、session-id、两个 id 的形状、UA 写法）规范化；第五道在 body 里，本层也顺手兜住（补工具、补 schema property、必要时把 `tool_choice` 锁成 `'none'`），其余原样透传。
 
-**判据怎么定的**：先用真 OpenCode CLI 走本机 MITM 中继逐字节转发拿到 200 基线，再**单变量回退**——只换 UA → 403，只换 session → 403，换 body／删 `x-opencode-session-id`／改 `x-opencode-client` → 200。头变体硬试之所以全都 403，是因为三门是 AND，少一道就分不清是哪道在拒。
+**判据怎么定的**：前两道与 UA 那道是 2026-10-14 用真 OpenCode CLI 走本机 MITM 中继逐字节转发拿到 200 基线，再**单变量回退**定出来的——只换 UA → 403，只换 session → 403，换 body／删 `x-opencode-session-id`／改 `x-opencode-client` → 200。后三道由上游 PR #330（2026-10-15 合并）用同一套 MITM + 逐字节重放公布，本层据此补齐；`x-opencode-client` 与 `x-opencode-project` 实测可省，本层不碰。头变体硬试之所以全都 403，是因为这些门是 AND，少一道就分不清是哪道在拒。
+
+**还有第六道，本层修不了**：本机出口（2026-10-15 实测 IP `54.169.8.63`）即使五道全对、用上游 main 的代码、甚至从浏览器同源发起，仍是 403。同一份代码、同一组头在 PR #330 作者与 issue 参与者手上能拿 200，说明上游还看**出口或 TLS 维度**（issue #310 里 spearzificial 也记了「手工 fetch 间歇 403」）。这条得靠换出口（上游 2.2.0 的 `src/egress.js` 自带 mihomo 出口选择）解决，不是请求头能修的。
+
 
 ## 二、补丁器：EAC 通道的首字延迟
 
@@ -64,7 +69,8 @@ dsh plugin --profile desktop add "github:Valorine97417/dsh-maid-lane-fix"
 ## 五、边界与安全
 
 - **只碰一个主机**：白名单写死 `opencode.ai`，其它任何请求（包括别的提供方、你自己的 API）**逐字节透传**，连 `init` 对象都不换。
-- **只在该动手时动手**：请求里必须有车道标记头（`x-opencode-session`）；已经合规的头一律原样放行。实测「干净形态经本层仍是 200」。
+- **只在该动手时动手**：请求里必须有车道标记头（`x-opencode-session`）；已经合规的请求一律原样放行（地址、头、body 全不动）。实测「干净形态经本层仍是 200」。
+- **只在能安全改 body 时改 body**：工具指纹只对 `body` 是 JSON 字符串的请求生效；`ReadableStream`、`FormData`、空体一律跳过，不猜不造。
 - **零运行时依赖**：不 import 任何 `@deepseek-ai/*`，`inject` 空数组，不注册路由、不带客户端半边——宿主缺服务时它也照常工作。
 - **可卸载**：走 `ctx.effect` 登记，插件卸载即恢复原 `fetch`；重复装配只复用已有那一层，不会叠 wrapper。
 - **不扣住用户**：任何一步出错只 warn，规范化失败就原样放行（车道宁可 403，也不该因为我们抛错而让整轮失败）。
@@ -73,7 +79,7 @@ dsh plugin --profile desktop add "github:Valorine97417/dsh-maid-lane-fix"
 ## 六、冒烟
 
 ```bash
-node scripts/smoke.mjs                          # 81 条：编码形状、幂等、UA 剥法、越界保护、挂载/卸载、补丁集锚点
+node scripts/smoke.mjs                          # 107 条：编码形状、端点改写、工具指纹、幂等、UA 剥法、越界保护、挂载/卸载、补丁集锚点
 OFM_DIR=<上游包目录> node scripts/smoke.mjs     # 追加真实上游分支：落盘字节必须"全部已应用"
 ```
 
@@ -82,6 +88,8 @@ OFM_DIR=<上游包目录> node scripts/smoke.mjs     # 追加真实上游分支�
 **端到端验证**（2026-10-14，本机）：
 - 中间层——取上游**未修版** `upstream.js`/`http.js`/`probe.js` 装上本层，带被点名的归属 UA 跑 `probeModel()` → 车道恢复；装前 `❌ UpstreamError`、装后 `✅ 200`，卸载立刻复现 403。
 - 补丁器——真打网关：`kimi-k2.6` 从「0 帧 / ok:true / 假 ttft」变成 `✗ SERVER` 并带出上游原话（`Function '…': Not found for account '…'`）；`glm-5.3`、`gpt-oss-20b` 不受影响。
+
+**上游现场复测**（2026-10-15，本机）：把上游 main（2.2.0 + PR #330）的 `src/upstream.js` 直接 import 当活体探针——`endpointFor()` 已返回 `/inference/v1/chat/completions`、`gatewayHeaders()` 已含 `x-opencode-session-id`、`mintSessionId()` 铸的头形状合规——用它自己铸的头、自己组的头去打，**仍然 403**；换 `/zen/v1`、换干净 `opencode/1.19.0` UA、强制 HTTP/1.1、非流式、换模型，全部 403。同一天从本机 Chrome 同源 `fetch` 直打也是 403。结论：本机出口过不去，五道门不是本机 403 的原因（上游 #330 作者与 issue 参与者那边同样的代码能 200）。
 
 ## 七、已知边界
 
