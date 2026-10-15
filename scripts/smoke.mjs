@@ -107,43 +107,50 @@ check('改写常量成对', LANE_PATH_FROM === '/zen/v1/' && LANE_PATH_TO === '/
 // ── 工具指纹：bash 与 read 必须同时在、且各带至少一个 property（PR #330）──
 const nested = (name, props) => ({ type: 'function', function: { name, description: 'x', parameters: { type: 'object', properties: props } } })
 {
-  const onlyBash = { tools: [nested('bash', { command: { type: 'string' } })] }
+  const onlyBash = { model: 'cat-jam-free', tools: [nested('bash', { command: { type: 'string' } })] }
   const c1 = normalizeTools(onlyBash)
   check('只有 bash → 补 read', onlyBash.tools.some(t => t.function.name === 'read'), JSON.stringify(c1))
   check('补进来的 read 带 property', Object.keys(onlyBash.tools.find(t => t.function.name === 'read').function.parameters.properties).length > 0)
 
-  const emptyProps = { tools: [nested('bash', {}), nested('read', {})] }
+  const emptyProps = { model: 'cat-jam-free', tools: [nested('bash', {}), nested('read', {})] }
   const c2 = normalizeTools(emptyProps)
   check('properties 为空 → 各补一个 property',
     Object.keys(emptyProps.tools[0].function.parameters.properties).length > 0
     && Object.keys(emptyProps.tools[1].function.parameters.properties).length > 0, JSON.stringify(c2))
 
-  const good = { tools: FINGERPRINT_TOOLS.map(n => nested(n, { input: { type: 'string' } })) }
+  const good = { model: 'cat-jam-free', tools: FINGERPRINT_TOOLS.map(n => nested(n, { input: { type: 'string' } })) }
   check('已合规的工具集 → 不动（空操作）', normalizeTools(good).length === 0, JSON.stringify(normalizeTools(good)))
   check('四个工具都在 → 也不补 tool_choice（有客户端工具）', good.tool_choice === undefined)
 
   const none = { messages: [] }
-  check('没有 tools → 不动（不凭空造）', normalizeTools(none).length === 0)
+  check('没有 model（不是聊天请求）→ 不动', normalizeTools(none).length === 0)
 
-  const noClientTools = { tools: [] }
+  // 车道只看「声明的名字」：tools 字段整个缺席也照样 403（2026-10-15 实测）。
+  const plain = { model: 'space-bunny-free', messages: [{ role: 'user', content: 'hi' }] }
+  const c3 = normalizeTools(plain)
+  check('没有 tools 字段 → 照样补指纹', FINGERPRINT_TOOLS.every(n => plain.tools.some(t => t.function.name === n)), JSON.stringify(c3))
+  check('没有 tools 字段 → tool_choice 锁成 none', plain.tool_choice === 'none', JSON.stringify(plain.tool_choice))
+  check('没有 tools 字段 → 补完幂等', normalizeTools(plain).length === 0)
+
+  const noClientTools = { model: 'cat-jam-free', tools: [] }
   normalizeTools(noClientTools)
   check('无客户端工具时 tool_choice 锁成 none', noClientTools.tool_choice === 'none', JSON.stringify(noClientTools.tool_choice))
   check('无客户端工具时四个指纹工具全补上',
     FINGERPRINT_TOOLS.every(n => noClientTools.tools.some(t => t.function.name === n)),
     noClientTools.tools.map(t => t.function.name).join())
 
-  const claudeShape = { tools: [{ name: 'bash', description: 'x', input_schema: { type: 'object', properties: {} } }] }
+  const claudeShape = { model: 'cat-jam-free', tools: [{ name: 'bash', description: 'x', input_schema: { type: 'object', properties: {} } }] }
   normalizeTools(claudeShape)
   check('Anthropic 形态：补 input_schema property',
     Object.keys(claudeShape.tools[0].input_schema.properties).length > 0)
   check('Anthropic 形态：诱饵也用 input_schema', claudeShape.tools.every(t => t.input_schema !== undefined))
   check('必查工具表就是 bash 与 read', REQUIRED_TOOLS.join() === 'bash,read')
 
-  const flatShape = { tools: [{ type: 'function', name: 'bash', description: 'x', parameters: { type: 'object', properties: {} } }] }
+  const flatShape = { model: 'cat-jam-free', tools: [{ type: 'function', name: 'bash', description: 'x', parameters: { type: 'object', properties: {} } }] }
   normalizeTools(flatShape)
   check('拍平形态：补 parameters property', Object.keys(flatShape.tools[0].parameters.properties).length > 0)
 
-  const idempotent = { tools: [nested('bash', {}), nested('read', {})] }
+  const idempotent = { model: 'cat-jam-free', tools: [nested('bash', {}), nested('read', {})] }
   normalizeTools(idempotent)
   check('工具指纹幂等（第二次零改动）', normalizeTools(idempotent).length === 0)
 }
