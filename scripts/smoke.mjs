@@ -95,6 +95,10 @@ check('归属本身仍在（补令牌不等于删归属）', fixedNoToken?.inclu
 check('已合规且带令牌的归属 UA 不动', normalizeUserAgent('deepseek-harness (+https://x) opencode/1.18.31') === null)
 check('干净 UA 不动', normalizeUserAgent('opencode/1.18.31') === null)
 check('dsh 前缀不动（上游放行这一族）', normalizeUserAgent('dsh/0.1.7 opencode/1.18.31') === null)
+// 2026-10-15 逐格复测钉死的门边界：只认「连字符 + 斜杠 + 版本号」这一个形态。
+check('下划线变体带版本 → 不动（实测上游放行）', normalizeUserAgent('deepseek_harness/2.2.0 opencode/1.19.0') === null)
+check('无版本号的归属 → 不动（实测上游放行）', normalizeUserAgent('deepseek-harness opencode/1.19.0') === null)
+check('v 前缀版本也算带版本 → 剥', !/deepseek-harness\//.test(normalizeUserAgent('deepseek-harness/v2.2.0 opencode/1.19.0') ?? ''))
 check('空 UA 不动', normalizeUserAgent('') === null)
 
 // ── 端点地址：老 /zen/v1 改写成新 /inference/v1（PR #330 逐格实测的那道门）──
