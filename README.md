@@ -4,7 +4,9 @@ DSH 小困插件 · **免费车道中间层 + 上游补丁器**：修 [dsh-our-f
 
 ## 一、中间层：五道指纹门
 
-`opencode.ai` 的免密车道会给第三方客户端上**五道指纹门**，五道都过才放行。上游 2.1.0 一道都不满足；`v2.2.0` 标签同样一道都不满足（实测该标签下 `src/upstream.js` 仍打 `/zen/v1`、无 `x-opencode-session-id`，`src/http.js` 也没有剥 UA 的处理——修复只活在 `main`），于是整条车道（探测 + 真实对话）全部 `403 FreeTierError`：
+`opencode.ai` 的免密车道会给第三方客户端上**五道指纹门**，五道都过才放行。上游 2.1.0 一道都不满足；`v2.2.0` 标签同样一道都不满足（实测该标签下 `src/upstream.js` 仍打 `/zen/v1`、无 `x-opencode-session-id`，`src/http.js` 也没有剥 UA 的处理——修复只活在 `main`），于是整条车道（探测 + 真实对话）全部 `403 FreeTierError`。
+
+> **上游已正式修好**（2026-10-15 更新）：`v2.3.0` 标签（commit `ac4c55e`）已带上全部修法——`src/upstream.js` 里 `/inference/v1` 出现 7 处、`x-opencode-session-id` 3 处，`src/http.js:374` 有 `UA_REFUSED = /deepseek[-_]harness/gi`。它由 PR #330 合入 `main` 后随版本发布，**本层对 2.3.0 的请求是空操作**。下面这张表仍是判据真值（2.2.0 及以前适用），也是本层存在的理由：装了旧版的机器、以及上游将来再动判据时。
 
 | 门 | 判据 | 上游为什么踩中 |
 | --- | --- | --- |
