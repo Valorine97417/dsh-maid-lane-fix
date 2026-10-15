@@ -1,6 +1,8 @@
 // lane-fix 离线冒烟：纯函数断言 + 挂载/卸载 + 「不碰别人」的边界。
 // 从仓库根运行：node scripts/smoke.mjs（不起网络、不碰真实 fetch）
 import { readFileSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
 import {
   canonicalSessionHex,
   canonicalRequestHex,
@@ -299,6 +301,22 @@ check('index 用 ctx.effect 登记卸载', /ctx\.effect\?\.\(/.test(index))
 const laneSrc = readFileSync(root('lib/lane.js'), 'utf8')
 check('源文件通篇无 @deepseek-ai import（零内核依赖）', !/@deepseek-ai\//.test(laneSrc))
 check('车道主机白名单只列 opencode.ai', /LANE_HOSTS = Object\.freeze\(\['opencode\.ai'\]\)/.test(laneSrc))
+
+// ── 还原基线：仓库里那份上游原文必须真的等于上游原文 ──
+// 校验靠清单而不是硬编码：改了基线就得连清单一起改，两边对不上立刻红。
+{
+  const dir = 'baseline/ofm-2.3.0'
+  const sums = readFileSync(root(`${dir}/SHA256SUMS`), 'utf8')
+    .trim().split('\n')
+    .map(line => { const [hash, name] = line.trim().split(/\s+/); return { hash, name } })
+  check('基线清单列了 3 个文件', sums.length === 3, String(sums.length))
+  for (const { hash, name } of sums) {
+    const gz = root(`${dir}/${name.replace(/\//g, '__')}.gz`)
+    const raw = gunzipSync(readFileSync(gz))
+    check(`基线 ${name} 解压后 sha256 与清单一致`, createHash('sha256').update(raw).digest('hex') === hash, name)
+  }
+  check('基线不进 files 白名单（档案，不是运行时资产）', !pkg.files.includes('baseline'))
+}
 
 console.log(`\n${pass} PASS / ${fail} FAIL`)
 process.exit(fail === 0 ? 0 : 1)
