@@ -285,7 +285,7 @@ globalThis.fetch = originalFetch
 // ── 清单/契约 ──
 const pkg = JSON.parse(readFileSync(root('package.json'), 'utf8'))
 check('包名 dsh-maid-lane-fix', pkg.name === 'dsh-maid-lane-fix', pkg.name)
-check('version 0.3.0', pkg.version === '0.3.0', pkg.version)
+check('version 0.3.1', pkg.version === '0.3.1', pkg.version)
 check('files 白名单含 lib、scripts 与 patch', Array.isArray(pkg.files) && pkg.files.includes('lib') && pkg.files.includes('scripts') && pkg.files.includes('cordis.patch.yml'))
 check('dsh.bundle.patch 指向本包 patch', pkg.dsh?.bundle?.patch === './cordis.patch.yml')
 check('peer 只有 cordis（零运行时依赖）', Object.keys(pkg.peerDependencies ?? {}).join() === '@deepseek-ai/cordis')
