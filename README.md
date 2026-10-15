@@ -4,7 +4,7 @@ DSH 小困插件 · **免费车道中间层 + 上游补丁器**：修 [dsh-our-f
 
 ## 一、中间层：五道指纹门
 
-`opencode.ai` 的免密车道会给第三方客户端上**五道指纹门**，五道都过才放行。上游 2.1.0 一道都不满足；2.2.0 的 `v2.2.0` 标签同样一道都不满足（`/zen/v1` 只修了 UA 那道），于是整条车道（探测 + 真实对话）全部 `403 FreeTierError`：
+`opencode.ai` 的免密车道会给第三方客户端上**五道指纹门**，五道都过才放行。上游 2.1.0 一道都不满足；`v2.2.0` 标签同样一道都不满足（实测该标签下 `src/upstream.js` 仍打 `/zen/v1`、无 `x-opencode-session-id`，`src/http.js` 也没有剥 UA 的处理——修复只活在 `main`），于是整条车道（探测 + 真实对话）全部 `403 FreeTierError`：
 
 | 门 | 判据 | 上游为什么踩中 |
 | --- | --- | --- |
@@ -18,7 +18,9 @@ DSH 小困插件 · **免费车道中间层 + 上游补丁器**：修 [dsh-our-f
 
 **判据怎么定的**：前两道与 UA 那道是 2026-10-14 用真 OpenCode CLI 走本机 MITM 中继逐字节转发拿到 200 基线，再**单变量回退**定出来的——只换 UA → 403，只换 session → 403，换 body／删 `x-opencode-session-id`／改 `x-opencode-client` → 200。后三道由上游 PR #330（2026-10-15 合并）用同一套 MITM + 逐字节重放公布，本层据此补齐；`x-opencode-client` 与 `x-opencode-project` 实测可省，本层不碰。头变体硬试之所以全都 403，是因为这些门是 AND，少一道就分不清是哪道在拒。
 
-**还有第六道，本层修不了**：本机出口（2026-10-15 实测 IP `54.169.8.63`）即使五道全对、用上游 main 的代码、甚至从浏览器同源发起，仍是 403。同一份代码、同一组头在 PR #330 作者与 issue 参与者手上能拿 200，说明上游还看**出口或 TLS 维度**（issue #310 里 spearzificial 也记了「手工 fetch 间歇 403」）。这条得靠换出口（上游 2.2.0 的 `src/egress.js` 自带 mihomo 出口选择）解决，不是请求头能修的。
+**没有第六道**（2026-10-15 更正）：五道全对就是能过——本机出口（`54.169.8.63`）用上游 `main` 的代码发请求**实测 200 出流**，真链路 UA `dsh/0.1.7 opencode/1.18.31` 同样 200。
+
+> 更正说明：本 README 早先写过「本机出口过不去，上游还看出口/TLS 维度」——**那个结论是错的**。真因是当时的探针模型 `ling-3.1-flash-free` 已被上游下架，请求拿到的是 `400 {"error":{"type":"server_error","message":"Upstream request failed: Model is unavailable."}}`，被误读成了闸门拒签。教训：**探针模型必须从当轮 `/inference/v1/models` 清单里取**，用下架模型量出来的矩阵是废的。
 
 
 ## 二、补丁器：EAC 通道的首字延迟
@@ -55,8 +57,9 @@ node scripts/patch-ofm.mjs --restore    # 从 .lane-fix-orig/ 回滚
 
 这是 `dsh-maid-scenery` 那套**融合层**思路在网络层的同一种做法——隔离在自家包里，与上游配合，不接管它的实现：
 
-- **改上游文件字节**：升级即丢（Windows 上 `file:` 安装还要维护 tgz／解包目录／部署目录**三处副本**，漏一处就复发）。
+- **改上游文件字节**：升级即丢（Windows 上 `file:` 安装还要维护 tgz／解包目录／部署目录**三处副本**，漏一处就复发；`pnpm` 重装还会从 tgz 重新解包，把改好的部署目录原地冲回旧版）。
 - **本中间层**：补丁在自家包里，上游怎么升级都冲不掉；上游**哪天自己修好了**，对已经合规的头本层是**空操作**（自动让路、零冲突），也不需要撤。
+- **实测佐证**（2026-10-15）：上游 `main` 已自带全部五道门的修法，本层对它的请求全部返回 `null`（零改动）——这正是设计意图。
 
 ## 四、装
 
@@ -79,7 +82,7 @@ dsh plugin --profile desktop add "github:Valorine97417/dsh-maid-lane-fix"
 ## 六、冒烟
 
 ```bash
-node scripts/smoke.mjs                          # 107 条：编码形状、端点改写、工具指纹、幂等、UA 剥法、越界保护、挂载/卸载、补丁集锚点
+node scripts/smoke.mjs                          # 113 条：编码形状、端点改写、工具指纹（含 tools 缺席）、幂等、UA 剥法、越界保护、挂载/卸载、补丁集锚点
 OFM_DIR=<上游包目录> node scripts/smoke.mjs     # 追加真实上游分支：落盘字节必须"全部已应用"
 ```
 
@@ -89,7 +92,12 @@ OFM_DIR=<上游包目录> node scripts/smoke.mjs     # 追加真实上游分支�
 - 中间层——取上游**未修版** `upstream.js`/`http.js`/`probe.js` 装上本层，带被点名的归属 UA 跑 `probeModel()` → 车道恢复；装前 `❌ UpstreamError`、装后 `✅ 200`，卸载立刻复现 403。
 - 补丁器——真打网关：`kimi-k2.6` 从「0 帧 / ok:true / 假 ttft」变成 `✗ SERVER` 并带出上游原话（`Function '…': Not found for account '…'`）；`glm-5.3`、`gpt-oss-20b` 不受影响。
 
-**上游现场复测**（2026-10-15，本机）：把上游 main（2.2.0 + PR #330）的 `src/upstream.js` 直接 import 当活体探针——`endpointFor()` 已返回 `/inference/v1/chat/completions`、`gatewayHeaders()` 已含 `x-opencode-session-id`、`mintSessionId()` 铸的头形状合规——用它自己铸的头、自己组的头去打，**仍然 403**；换 `/zen/v1`、换干净 `opencode/1.19.0` UA、强制 HTTP/1.1、非流式、换模型，全部 403。同一天从本机 Chrome 同源 `fetch` 直打也是 403。结论：本机出口过不去，五道门不是本机 403 的原因（上游 #330 作者与 issue 参与者那边同样的代码能 200）。
+**上游现场复测**（2026-10-15，本机）：把上游 `main`（2.2.0 + PR #330）的 `src/upstream.js` 直接 import 当活体探针——`endpointFor()` 已返回 `/inference/v1/chat/completions`、`gatewayHeaders()` 已含 `x-opencode-session-id`、`mintSessionId()` 铸的头形状合规——用它自己铸的头、自己组的头去打，**200 出流**。上游 `main` 这版已经能自己过门；本层对它的请求是空操作（`normalizedRequest` 返回 `null`）。
+
+**五道门的真判据**（本机逐格单变量实测，比 PR #330 的描述更细）：
+- UA 那道只拒「`deepseek-harness/` **+ 斜杠版本号**」这个组合：`deepseek-harness/2.2.0` → 403、`DEEPSEEK-HARNESS/2.2.0` → 403；而 `deepseek-harness`（无版本）、`deepseek_harness/2.2.0`（下划线）、`dsh/2.2.0` 全放行。
+- 另有一道 PR #330 没写：**UA 必须含 `opencode/<版本>` token**——`myapp/1.0`、`node`、空 UA 一律 403，加 `opencode/1.19.0` 即 200。
+- **`tools` 字段整个缺席也 403**（`tools: []` 同），纯文本轮次必踩——0.3.1 补的就是这个缺口。
 
 ## 七、已知边界
 
