@@ -2,6 +2,24 @@
 
 **这份东西是历史档案，不是代码资产。** 留着是为了记住「那天我们自己摸出来的修法长什么样」，不是为了让谁去用它。
 
+## commit 本体在 `ofm-upstream` 分支
+
+2026-10-15 追加：老大要 commit 本体也进 lane-fix，所以本仓库多了一条 **`ofm-upstream` 分支**，它的顶端就是原始 commit `6bcf2e6`（SHA 与工作副本里那笔**完全一致**，没经过 cherry-pick 重写）：
+
+```bash
+git fetch origin ofm-upstream
+git log --oneline -5 origin/ofm-upstream
+# 6bcf2e6 fix(http): strip the deepseek-harness/<version> token the lane 403s on
+# c5f7559 chore: drop scratch repro scripts
+# af5c444 upstream: clamp derived request-id counter to 12 bits
+# 0d06056 upstream: mint canonical time-prefix for derived session/request ids
+# 8c810d1 catalog: re-sign the manifest over ae38023   ← 上游 main 基线
+```
+
+分支带着上游那 424 个 commit 的完整祖先链，所以 `git log` 能看到真实来路；`main` 一行没动。**别把这条分支合进 `main`**——它是留档用的历史切片，不是本仓库要发布的代码（真要合，`src/http.js` 和 `src/upstream.js` 会凭空长出来一份上游的源码副本）。
+
+有了这条分支，下面那份 patch 文件就成了「不方便 clone 时的兜底」——两者内容对应同一批改动。
+
 ## 是什么
 
 `ofm-upstream-patches.patch` —— 相对 `Ebony-Vinyl/dsh-our-free-model` 的 `main`（基线 `8c810d1`），我们本地工作副本 `D:\DeepSeek Harness\Works\dsh-our-free-model` 领先的 **3 个实质 commit** 压成的一份 patch：
@@ -26,7 +44,7 @@
 - 时间前缀：上游 `mintSessionId()` 直接铸 `~(ms×0x1000+seq)`，派生 id 走缓存而非摘要头；
 - 计数器 clamp：上游 request id 是固定 `+1n`，压根不递增，不需要 clamp。
 
-所以这 3 笔的**活代码价值为零**——同样的修法已经活在 `lib/lane.js` 里（中间层不依赖上游怎么改）。为一个已被上游覆盖的补丁 fork 一个仓库，只会让一份公开副本挂着我们当时的探测过程。
+所以这 3 笔的**活代码价值为零**——同样的修法已经活在 `lib/lane.js` 里（中间层不依赖上游怎么改）。为一个已被上游覆盖的补丁 fork 一个仓库，只会让一份公开副本挂着我们当时的探测过程。留档改用 `ofm-upstream` 分支（见上），对象躺在**本仓库**里，不往账号下多挂一个仓。
 
 ## 怎么用（真要的话）
 
