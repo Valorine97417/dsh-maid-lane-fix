@@ -287,7 +287,18 @@ globalThis.fetch = originalFetch
 // ── 清单/契约 ──
 const pkg = JSON.parse(readFileSync(root('package.json'), 'utf8'))
 check('包名 dsh-maid-lane-fix', pkg.name === 'dsh-maid-lane-fix', pkg.name)
-check('version 0.3.1', pkg.version === '0.3.1', pkg.version)
+// 版本号别写死：bump 一次就要改断言，属于假红。只校验形态与「不低于已知基线」。
+const VERSION_FLOOR = [0, 3, 2]
+const versionParts = String(pkg.version ?? '').split('.').map(Number)
+const cmpVersion = (a, b) => {
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] - b[i]
+  }
+  return 0
+}
+const versionOk = versionParts.length === 3 && versionParts.every(Number.isInteger)
+  && cmpVersion(versionParts, VERSION_FLOOR) >= 0
+check(`version 形态合法且不低于 ${VERSION_FLOOR.join('.')}`, versionOk, pkg.version)
 check('files 白名单含 lib、scripts 与 patch', Array.isArray(pkg.files) && pkg.files.includes('lib') && pkg.files.includes('scripts') && pkg.files.includes('cordis.patch.yml'))
 check('dsh.bundle.patch 指向本包 patch', pkg.dsh?.bundle?.patch === './cordis.patch.yml')
 check('peer 只有 cordis（零运行时依赖）', Object.keys(pkg.peerDependencies ?? {}).join() === '@deepseek-ai/cordis')

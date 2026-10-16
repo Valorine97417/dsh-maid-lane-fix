@@ -36,6 +36,40 @@ function argValue(flag) {
 }
 const has = flag => process.argv.includes(flag)
 
+/**
+ * 参数白名单校验。**任何不认识的参数都直接报错退出，绝不落到默认动作。**
+ *
+ * 为什么非要有这一道：本脚本的默认动作是「体检 + 落盘」。过去它不校验参数，
+ * `--help` / `--h` / 打错一个字母（`--dryrun`）都会被静默忽略、一路走到写盘——
+ * 2026-10-17 小困就是这样把 `--help` 当成查用法，结果真把 7 处补丁写进了运行包。
+ * 「想知道这脚本怎么用」居然会改文件，这个失败模式必须从根上掐掉。
+ */
+const USAGE = `用法：node scripts/patch-ofm.mjs [选项]
+
+  （无参数）            体检 + 落盘（默认动作，会改文件）
+  --dry-run             只体检，不写盘
+  --verify              逐字节核对落盘结果（改完必跑）
+  --restore             从 ${BACKUP_DIR}/ 回滚
+  --dir <path>          指定上游包目录（默认从 profile 的 node_modules 找）
+  -h, --help            显示本用法（不写盘）`
+
+const KNOWN_FLAGS = new Set(['--dry-run', '--verify', '--restore', '--dir', '-h', '--help'])
+{
+  const unknown = process.argv.slice(2).filter(arg => !KNOWN_FLAGS.has(arg))
+  // --dir 的值是裸路径、不在白名单里，把它从待检列表里摘掉。
+  const dirValue = argValue('--dir')
+  const offending = unknown.filter(arg => arg !== dirValue)
+  if (offending.length > 0) {
+    console.error(`未知参数：${offending.join(' ')}\n`)
+    console.error(USAGE)
+    process.exit(2)
+  }
+  if (has('-h') || has('--help')) {
+    console.log(USAGE)
+    process.exit(0)
+  }
+}
+
 /** 找上游包：先看 profile 的 node_modules，再退到几个常见落点。 */
 function findPackage() {
   const explicit = argValue('--dir')

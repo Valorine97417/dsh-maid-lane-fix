@@ -48,7 +48,10 @@ node scripts/patch-ofm.mjs --dry-run    # 体检：哪些待应用、哪些已�
 node scripts/patch-ofm.mjs              # 落盘（首次自动备份原文件到 .lane-fix-orig/）
 node scripts/patch-ofm.mjs --verify     # 逐字节核对落盘结果与补丁集一致
 node scripts/patch-ofm.mjs --restore    # 从 .lane-fix-orig/ 回滚
+node scripts/patch-ofm.mjs --help       # 只看用法（v0.3.2 起：不认的参数一律报错退出，绝不写盘）
 ```
+
+> **不带参数 = 落盘**，所以参数写错很危险。v0.3.2 起脚本先做参数白名单校验：只认上面这几个旗标（加 `-h`），任何不认识的参数（`--dryrun` 这种打错的）直接报 `未知参数：xxx` 并 `exit 2`，**绝不落到默认动作**。此前 `--help` 会被静默忽略、一路把补丁真打进运行包——想查用法反而改了文件，这个失败模式已从根上掐掉。
 
 自动定位包：先 `~/.dsh/profiles/desktop/node_modules/dsh-our-free-model`（解 junction），再 `web` profile；都没有就用 `--dir <包目录>` 指。
 

@@ -2,7 +2,7 @@
   "name": "dsh-maid-lane-fix",
   "description": "DSH 小困插件 · 免费车道中间层与上游补丁器：给 dsh-our-free-model 的出网请求套一层指纹规范化（端点地址 / 会话 id 时间编码 / x-opencode-session-id / User-Agent 归属写法 / 工具指纹），并用可重放、可回滚的补丁器修好 EAC 通道测不出首字延迟的问题。",
   "icon": "assets/plugin-icon.png",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
@@ -27,8 +27,8 @@
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
-      "assets/plugin-icon.png"
-    ],
+    "assets/plugin-icon.png"
+  ],
   "exports": {
     ".": "./index.js",
     "./lib/lane.js": "./lib/lane.js",
