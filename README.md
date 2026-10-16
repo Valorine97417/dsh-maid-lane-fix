@@ -24,7 +24,6 @@ DSH 小困插件 · **免费车道中间层 + 上游补丁器**：修 [dsh-our-f
 
 > 更正说明：本 README 早先写过「本机出口过不去，上游还看出口/TLS 维度」——**那个结论是错的**。真因是当时的探针模型 `ling-3.1-flash-free` 已被上游下架，请求拿到的是 `400 {"error":{"type":"server_error","message":"Upstream request failed: Model is unavailable."}}`，被误读成了闸门拒签。教训：**探针模型必须从当轮 `/inference/v1/models` 清单里取**，用下架模型量出来的矩阵是废的。
 
-
 ## 二、补丁器：EAC 通道的首字延迟
 
 EAC（共付车道）面板上「测不了首字延迟」是三层叠出来的，三处都在上游：
@@ -33,14 +32,14 @@ EAC（共付车道）面板上「测不了首字延迟」是三层叠出来的�
 | --- | --- |
 | 卡片上从来没有延迟数 | 探测轮显式跳过 EAC 条目，`buildSummary` 又对它们硬编码 `ttftMs: undefined` / `probedAt: 0` —— 设计如此，不是故障 |
 | 「测一次」按钮卡死 | 前端 bench 超时 240s、后端空闲预算 300s，**差 60s**；而网关每 ~15s 一个 `: keepalive` 注释帧，把「空闲超时」无限续命 → 后端永不放弃、前端先报失败 |
-| 偶尔"测出来了"其实是假的 | 网关会把错误 JSON **裸写**进 SSE（没有 `data:` 前缀），解析器只认 `data:` 行 → 静默丢弃成「0 帧、正常结束」，延迟记成总耗时 |
+| 偶尔「测出来了」其实是假的 | 网关会把错误 JSON **裸写**进 SSE（没有 `data:` 前缀），解析器只认 `data:` 行 → 静默丢弃成「0 帧、正常结束」，延迟记成总耗时 |
 
 补丁集（7 处，跨 `client.js` / `src/http.js` / `index.js`）：
 
 - `bench-deadline` —— 前端超时压过后端，别先于它放弃
 - `idle-clock-comment` / `idle-clock-progress` —— **只有真帧能给空闲超时上弦**，注释帧不算
 - `bare-json-is-a-failure` —— 裸 JSON 是失败，不是空流正常结束（下游 `stream.js` 自己会分类，只要让它看见）
-- `bench-records-a-verdict` / `bench-ttft-from-measured` / `verdict-outlives-the-round` —— 测速就是一次探测：零帧算失败、ttft 用校验过的那份、结果写进账本且**有记录的行不再被"跳过"规则吃掉**
+- `bench-records-a-verdict` / `bench-ttft-from-measured` / `verdict-outlives-the-round` —— 测速就是一次探测：零帧算失败、ttft 用校验过的那份、结果写进账本且**有记录的行不再被「跳过」规则吃掉**
 
 ### 用法
 

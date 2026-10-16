@@ -21,9 +21,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import process from 'node:process'
+import { gunzipSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { applyPatchSet, inspectPatchSet, PATCHED_FILES, PATCH_SET_VERSION } from '../lib/ofm-patch.js'
 
-const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
+// fileURLToPath 会解码 percent-encoding（路径带空格时 .pathname 是坏的），盘符也一并处理。
+const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BACKUP_DIR = '.lane-fix-orig'
 
 function argValue(flag) {
@@ -58,6 +62,53 @@ function readFiles(root) {
     files[name] = fs.readFileSync(file, 'utf8')
   }
   return files
+}
+
+/**
+ * 加载仓内的干净原文基线（baseline/ofm-<包版本>），回答一个问题：
+ * 「现在这份文件，还是打补丁之前的样子吗？」
+ *
+ * 为什么备份前非要问这一句：备份只在缺失时创建，若文件曾被手改（补丁已应用、
+ * 或被改成未知状态），直接把现状存成备份，--restore 就会把文件换回一个错误
+ * 状态——备份语义失真。所以备份落盘前先与基线比对，对得上才配叫「原文备份」。
+ *
+ * 基线自身先过 SHA256SUMS 清单：基线损坏或被换过时宁可报错，不能拿一份不可信
+ * 的基线把脏文件判成干净。没有与包版本匹配的基线时返回 null（上游升版后、
+ * 基线还没重导），调用方按「无法证明干净」处理。
+ */
+function loadBaseline(root) {
+  let version
+  try {
+    version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version
+  } catch {
+    return null
+  }
+  const dir = path.join(HERE, '..', 'baseline', `ofm-${version}`)
+  if (!fs.existsSync(dir)) return null
+  const sums = new Map(
+    fs.readFileSync(path.join(dir, 'SHA256SUMS'), 'utf8')
+      .trim().split('\n')
+      .map(line => { const [hash, name] = line.trim().split(/\s+/); return [name, hash] }),
+  )
+  const files = {}
+  for (const name of PATCHED_FILES) {
+    const expected = sums.get(name)
+    if (expected === undefined) {
+      throw new Error(`baseline/ofm-${version}/SHA256SUMS 缺 ${name}：基线与补丁集不同步，先补基线再落盘`)
+    }
+    let raw
+    try {
+      raw = gunzipSync(fs.readFileSync(path.join(dir, `${name.replace(/\//g, '__')}.gz`)))
+    } catch {
+      throw new Error(`baseline/ofm-${version} 缺 ${name.replace(/\//g, '__')}.gz（或解不开），先补基线再落盘`)
+    }
+    const actual = createHash('sha256').update(raw).digest('hex')
+    if (actual !== expected) {
+      throw new Error(`baseline/ofm-${version} 的 ${name} sha256 与清单不符——基线已损坏，拒绝据此判定「干净」`)
+    }
+    files[name] = raw.toString('utf8')
+  }
+  return { dir, version, files }
 }
 
 const GLYPH = { applied: '✓ 已应用', ready: '· 待应用', 'anchor-lost': '✗ 锚点失配', 'missing-file': '✗ 文件缺失' }
@@ -124,12 +175,32 @@ if (changed.length === 0) {
   process.exit(0)
 }
 
-// 首次落盘前留一份原文件，回滚才有依据。
+// 首次落盘前留一份原文件，回滚才有依据。备份只在「当前内容 == 干净基线」时
+// 才按常规名落盘：文件曾被手改（补丁已应用/被改成未知状态）时，把现状存成
+// 常规备份，之后 --restore 会把文件换回这个错误状态——语义失真。那种情况
+// 落 .patched-<时间戳> 后缀留给人工核对，--restore 不碰它。
+const baseline = loadBaseline(root)
+const stamp = new Date().toISOString().replace(/[:.]/g, '-')
 const backupDir = path.join(root, BACKUP_DIR)
 fs.mkdirSync(backupDir, { recursive: true })
+let patchedBackups = 0
 for (const name of changed) {
-  const backup = path.join(backupDir, name.replace(/\//g, '__'))
-  if (!fs.existsSync(backup)) fs.copyFileSync(path.join(root, name), backup)
+  const backupName = name.replace(/\//g, '__')
+  const backup = path.join(backupDir, backupName)
+  if (fs.existsSync(backup)) continue
+  if (baseline !== null && files[name] === baseline.files[name]) {
+    fs.copyFileSync(path.join(root, name), backup)
+    continue
+  }
+  const patched = `${backup}.patched-${stamp}`
+  fs.copyFileSync(path.join(root, name), patched)
+  patchedBackups += 1
+  const why = baseline === null
+    ? '仓内没有与包版本匹配的干净基线（baseline/），无法证明当前内容是打补丁前的原文'
+    : `与 ${path.relative(HERE, baseline.dir).replaceAll('\\', '/')} 的干净基线不一致`
+  console.error(`  ⚠ 检测到文件已被修改，本次备份的是已改状态，--restore 前请确认：${name}`)
+  console.error(`    判定依据：${why}。`)
+  console.error(`    已改状态备份在 ${BACKUP_DIR}/${backupName}.patched-${stamp}；--restore 只认常规备份，不会动这份，也就意味着 ${name} 无法用 --restore 回滚。`)
 }
 for (const name of changed) {
   const target = path.join(root, name)
@@ -137,4 +208,7 @@ for (const name of changed) {
   console.log(`  写入 ${name}（${fs.statSync(target).size} 字节）`)
 }
 console.log(`\n完成。原文件在 ${BACKUP_DIR}/，回滚：node scripts/patch-ofm.mjs --restore`)
+if (patchedBackups > 0) {
+  console.log(`⚠ 其中 ${patchedBackups} 份备份是已改状态（.patched-* 后缀），--restore 不会恢复它们——回滚前先人工确认。`)
+}
 console.log('**改动要重启 DSH 才生效。**')
