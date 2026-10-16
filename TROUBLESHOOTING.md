@@ -284,9 +284,32 @@
 
 ### 4.6 包内还有别的补丁器，别搞混
 
-- 本机 `vendor/channel-pack/` 下除 `pack.js`（2.88MB，2026-10-16 实测）外还有一串 `pack.js.bak-*` 备份——`bak-ofm-patch-<YYYYMMDD-HHMMSS>`、`bak-codearts-diag-*`、`bak-codearts-sig-*`、`bak-false-risk-*`，那是围绕**上游渠道适配器构建产物**的另一套补丁工作留下的，命名法与 lane-fix 的 `.lane-fix-orig/` 不同，两回事。
+- 本机 `vendor/channel-pack/` 下除 `pack.js`（2.88MB，2026-10-16 实测）外还有一串 `pack.js.bak-*` 备份——`bak-ofm-patch-<YYYYMMDD-HHMMSS>`、`bak-codearts-sig-*`、`bak-false-risk-*`、`bak-codearts-diag-*`、`bak-benefit4004-*`，那是围绕**上游渠道适配器构建产物**的另一套补丁工作留下的，命名法与 lane-fix 的 `.lane-fix-orig/` 不同，两回事（完整台账见 4.7）。
 - **注意**：`pack.js` 是构建产物，改 `src/*.ts` 不生效——但这指的是上游**渠道适配器**那类补丁；lane-fix 补丁集的目标是包根的 `client.js` / `index.js` / `src/http.js`，三者互不替代。
 - **验证**：跑 lane-fix 的 `--dry-run`，它只认那三个文件；`pack.js` 不在 `PATCHED_FILES` 里。
+
+### 4.7 channel-pack 渠道补丁台账（2026-10-16/17，五补丁 + 一配置）
+
+> 落点全在 `<上游包>/vendor/channel-pack/pack.js`（构建产物）与 `src/` 同名源码，逐处带 `/* patched(小困 …) */` 注释。动 pack.js 前先 `cp` 一份 `pack.js.bak-<用途>-<时间戳>`。改 `src/*.ts` 不生效——运行时读的是 pack.js。
+
+| # | 补丁 | 落点 | 针对症状 | 修法 |
+| --- | --- | --- | --- | --- |
+| 1 | workbuddy 会话三头 | pack.js:35282 | 国际版全模型 400 code=11128「conversation id missing / first message is not system prompt」 | 请求头补 `X-Conversation-ID` / `X-Conversation-Message-ID` / `X-Conversation-Request-ID`（2×2 矩阵实证：三头与首条 system 是 AND 的两关，只补头会撞第二关） |
+| 2 | 11128 前置排除 | pack.js:34510 | 假风控：缺头的 11128 响应被 `isContentRejection` 判成账号级安全拦截 → 换号循环把健康账号逐个冻 30 分钟 | 判据最前加 `if (/"code"\s*:\s*11128/.test(body)) return false;`——11128 与真拦截 11140 **共用 "request illegal" 文案**，判据必须看 code 不能看 msg（上游 `tencent-fingerprint.ts:54` 注释明令别把 11128 加进判据，删正则会漏判真拦截） |
+| 3 | 换号最小间隔 | pack.js:35232 | 换号循环零延迟连打，同 IP 短时轮换多号是风控关联特征 | 循环内 `await sleepMs(600)` |
+| 4 | content-type 退出签名 | pack.js:31028 | codearts 全模型 403/401 `APIG.0301 verify ak sk signature fail`（直连矩阵单变量实证：content-type 不参与签名即变 429） | 签名前不再 set content-type，挪到 Authorization 之后挂回（发送侧行为不变） |
+| 5 | benefit 裸 "4004" 判定 | pack.js:33217 | v4.1-flash 摘戳重试永不触发：插件自带「benefit not found → 去掉 `maas_type` 戳重发」（pack.js:32992），但触发判定只认全串 `InferHub.4004.200`，上游实测只回裸 `"4004"` | 判定加 `|| data.error_code === "4004"`（`src/llm-adapter.ts:1658` 同步） |
+
+**配置类（非补丁）——403 真凶**：codearts 的 403 不是华为云回的，是本机 bili 压缩代理拒转签名请求，响应体 `signed_request_requires_resign / bili_resign_unavailable`——SDK-HMAC-SHA256 签名覆盖请求体，bili 一旦压缩改写内容签名即失效（上游必 401），于是直接 403。修法在 `C:\Users\Kayle\.config\billion-context\billion-context.json` 加 `"resign":{"sdk-hmac-sha256":{"passthrough":true}}`（签名链直通不压缩）。复验：经网关 8326 发 `codearts/deepseek-v4-flash` HTTP 200 真出词（2026-10-17 00:25，`"收到"`）。
+
+- **症状**：五处修复全落盘、重启生效后 codearts 仍全 403；直连矩阵（不经 bili）怎么改都是 429/200，一个 403 都复现不出来。
+- **原因**：403 是 bili 中间层写的；插件的抛错点（pack.js:33064）只抛 `codearts: model request failed with HTTP 403`，**响应体直接丢弃**——不抓 body 永远在猜。
+- **解法**：在 pack.js 非 200 分支埋日志（`appendFileSync` 追加到 `~/.dsh/our-free-model/codearts-diag.log`，记 status + 前 800 字，try/catch 包住），重启后触发一次即抓到真凶。
+- **验证**：日志白纸黑字 `bili_resign_unavailable`；passthrough 配置后同请求 200 出词。
+
+**备份台账**（按时间序，都在 `<上游包>/vendor/channel-pack/`）：`bak-ofm-patch-20261016-200606`（2881789B）→ `bak-codearts-sig-20261016-201657`（2882226B）→ `bak-false-risk-20261016-202625`（2882513B）→ `bak-codearts-diag-20261016-204044`（2883203B）→ `bak-benefit4004-20261017-002745`（2883449B）；最终 pack.js 2883612 字节，md5 `801850a2880be6ea3a55fb731510db00`。
+
+**收尾战果**（2026-10-17 全量探测 62 模型）：48 通。codearts 3/4（仅 `glm-5.3-flash` 上游未注册 404；`deepseek-v4-flash`/`deepseek-v4.1-flash`/`glm-5.3` 全 200）、workbuddy 4/4、buddy 4/5、cline 16/24（8 个上游 502/地区封锁）、qoder 1/4（上游 502 pricingUrl）、gemini 0/1（出口地区，换节点即通）、其余渠道全绿——剩余 14 个失败全部非本机代码问题。
 
 ## 五、关键路径与配置落点
 
