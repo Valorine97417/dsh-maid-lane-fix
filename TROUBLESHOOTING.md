@@ -140,6 +140,7 @@
 - **症状**：`--dry-run` 列出了 7 行补丁，但 `lib/ofm-patch.js` 与 `scripts/patch-ofm.mjs` 的文件头注释写的是「四处补丁 / 这四处毛病」。
 - **原因**：注释是 4 处时代的旧文案，后来补到 7 处（`PATCHES.length === 7`，`PATCH_SET_VERSION = '1'`）没同步改。**以报告行数为准。**
 - **影响**：只影响阅读与自查（冒烟里有一条「补丁集非空且每处都有 why」，不校验数量），不影响落盘。
+- **解法**：以代码常量 `PATCHES.length` 为唯一真值改注释；**以后每次增删补丁集都要同步改这两处文件头注释**，别再让文案落后于数组。
 - **验证**：`node -e "import('./lib/ofm-patch.js').then(m=>console.log(m.PATCHES.length))"` → `7`。
 
 ### 2.7 补丁集清单（7 处，跨 3 个文件）
@@ -264,7 +265,9 @@
 
 ### 4.3 补丁集与基线都绑定 v2.3.0
 
-- 补丁锚点、`baseline/ofm-2.3.0/*.gz`、`SHA256SUMS` 三份都是 v2.3.0 的。上游发 v2.4.0 后：先按 2.5 的取法重导基线，再逐处核对锚点（可能要升 `PATCH_SET_VERSION`）。
+- **症状**：上游发新版，`--dry-run` 报 `anchor-lost`，或基线校验 `SHA256SUMS` 不匹配。
+- **原因**：补丁锚点、`baseline/ofm-2.3.0/*.gz`、`SHA256SUMS` 三份都绑定在 v2.3.0 上，上游一改这三份就集体对不上（可能要升 `PATCH_SET_VERSION`）。
+- **解法**：先按 2.5 的取法重导基线，再逐处核对锚点；锚点真变了就按新版改写锚点并升 `PATCH_SET_VERSION`。
 - **验证**：`--dry-run` 在干净新版上应报「7 处待应用」；报 `anchor-lost` 就是锚点真的变了。
 
 ### 4.4 `ofm-upstream` 分支：留档，别合进 `main`
@@ -285,6 +288,11 @@
 
 ### 4.5 两条线「都打不通」但性质完全不同，别混
 
+- **症状**：免费车道与 EAC 共付车道同时不通，日志里一边 `403 FreeTierError`、一边 HTTP 500 / 零数据帧，容易当成同一个毛病去修。
+- **原因**：两者的失败机理完全不同——免费车道是**客户端姿态封锁**（有门，五道 AND + 传输层指纹），EAC 是**根本没有门**，自家网关 `ourfreemodel.beichenapi.com/eac/v1` 的上游 provider 挂了。
+- **解法**：先按下面的表分流，别把一条线的解法套到另一条上——免费车道改头够不到（要 uTLS 类），补丁器只能修面板的「不喊疼」；EAC 客户端怎么改 body 都一样，**只能等网关修**，补丁只让慢模型**如实失败**，不会让它们变快。
+- **验证**：按现象归位后，改动只影响对应那一条线；免费车道的修复不会让 EAC 的 500/零帧消失，反之亦然。
+
 | 维度 | 免费车道（opencode.ai） | EAC 共付车道 |
 | --- | --- | --- |
 | 性质 | 客户端姿态封锁（有门，五道 AND + 传输层指纹） | **根本没有门**，是自家网关 `ourfreemodel.beichenapi.com/eac/v1` 的上游 provider 挂了 |
@@ -293,8 +301,9 @@
 
 ### 4.6 包内还有别的补丁器，别搞混
 
-- 本机 `vendor/channel-pack/` 下除 `pack.js`（2.88MB，2026-10-16 实测）外还有一串 `pack.js.bak-*` 备份——`bak-ofm-patch-<YYYYMMDD-HHMMSS>`、`bak-codearts-sig-*`、`bak-false-risk-*`、`bak-codearts-diag-*`、`bak-benefit4004-*`，那是围绕**上游渠道适配器构建产物**的另一套补丁工作留下的，命名法与 lane-fix 的 `.lane-fix-orig/` 不同，两回事（完整台账见 4.7）。
-- **注意**：`pack.js` 是构建产物，改 `src/*.ts` 不生效——但这指的是上游**渠道适配器**那类补丁；lane-fix 补丁集的目标是包根的 `client.js` / `index.js` / `src/http.js`，三者互不替代。
+- **症状**：`vendor/channel-pack/` 下看到一串 `pack.js.bak-*`，误以为是 lane-fix 自己留下的备份，或以为改 `src/*.ts` 能生效。
+- **原因**：本机 `vendor/channel-pack/` 下除 `pack.js`（2.88MB，2026-10-16 实测）外还有一串 `pack.js.bak-*` 备份——`bak-ofm-patch-<YYYYMMDD-HHMMSS>`、`bak-codearts-sig-*`、`bak-false-risk-*`、`bak-codearts-diag-*`、`bak-benefit4004-*`，那是围绕**上游渠道适配器构建产物**的另一套补丁工作留下的，命名法与 lane-fix 的 `.lane-fix-orig/` 不同，两回事（完整台账见 4.7）。另外 `pack.js` 是构建产物，改 `src/*.ts` 不生效——但这指的是上游**渠道适配器**那类补丁；lane-fix 补丁集的目标是包根的 `client.js` / `index.js` / `src/http.js`，三者互不替代。
+- **解法**：认准目标文件——lane-fix 只动包根的 `client.js` / `index.js` / `src/http.js`；`vendor/channel-pack/pack.js` 归 4.7 那套渠道补丁台账管，动它前先 `cp` 一份 `pack.js.bak-<用途>-<时间戳>`。
 - **验证**：跑 lane-fix 的 `--dry-run`，它只认那三个文件；`pack.js` 不在 `PATCHED_FILES` 里。
 
 ### 4.7 channel-pack 渠道补丁台账（2026-10-16/17，五补丁 + 一配置）
