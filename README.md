@@ -84,6 +84,10 @@ node scripts/patch-ofm.mjs --dry-run         # 应报「7 处待应用」= 干�
 
 `baseline/` 与 `docs/` 一样**故意不在 `files` 白名单**：`git clone` 看得到、`pnpm add` 装不到——它是档案，不是运行时要用的东西。
 
+### 三类拒签事故的现场记录
+
+WorkBuddy `request illegal`、CodeArts `401→429`、trae/lobsterai 502 限流伪装——症状、根因、修法与验证判据都归档在 [`docs/ofm-lane-fingerprint-incidents.md`](docs/ofm-lane-fingerprint-incidents.md)。**上游升级后先看那份**再决定打哪几处补丁：2.5.1 已自行补上会话三头（我方那处降级为冗余），但 CodeArts 签名两处仍必需。
+
 ## 三、为什么是「中间层」而不是改上游
 
 这是 `dsh-maid-scenery` 那套**融合层**思路在网络层的同一种做法——隔离在自家包里，与上游配合，不接管它的实现：
