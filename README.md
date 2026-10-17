@@ -66,16 +66,17 @@ node scripts/patch-ofm.mjs --help       # 只看用法（v0.3.2 起：不认的�
 | 目录 | 对应上游 | 三份 gzip -9 合计 |
 | --- | --- | --- |
 | `baseline/ofm-2.3.0/` | v2.3.0 | 179208 字节 |
-| `baseline/ofm-2.5.0/` | v2.5.0（现行） | 188606 字节 |
+| `baseline/ofm-2.5.0/` | v2.5.0 | 188606 字节 |
+| `baseline/ofm-2.5.1/` | v2.5.1（现行） | 191721 字节 |
 
 每个目录里三份 `*.gz` + 一份 `SHA256SUMS`（全值见该文件），`src__http.js` 的 `__` 是补丁器备份文件的命名法，解出来要放回 `src/http.js`。冒烟脚本按目录扫，**新存一份基线不用改冒烟**，但清单必须与 `PATCHED_FILES` 完全对齐、sha256 必须对得上。
 
 ```bash
 # 换成你要的那一版目录
 PKG=~/.dsh/profiles/desktop/node_modules/dsh-our-free-model
-gunzip -c baseline/ofm-2.5.0/client.js.gz    > "$PKG/client.js"
-gunzip -c baseline/ofm-2.5.0/index.js.gz     > "$PKG/index.js"
-gunzip -c baseline/ofm-2.5.0/src__http.js.gz > "$PKG/src/http.js"
+gunzip -c baseline/ofm-2.5.1/client.js.gz    > "$PKG/client.js"
+gunzip -c baseline/ofm-2.5.1/index.js.gz     > "$PKG/index.js"
+gunzip -c baseline/ofm-2.5.1/src__http.js.gz > "$PKG/src/http.js"
 node scripts/patch-ofm.mjs --dry-run         # 应报「7 处待应用」= 干净的原文
 ```
 
@@ -107,7 +108,7 @@ dsh plugin --profile desktop add "github:Valorine97417/dsh-maid-lane-fix"
 - **零运行时依赖**：不 import 任何 `@deepseek-ai/*`，`inject` 空数组，不注册路由、不带客户端半边——宿主缺服务时它也照常工作。
 - **可卸载**：走 `ctx.effect` 登记，插件卸载即恢复原 `fetch`；重复装配只复用已有那一层，不会叠 wrapper。
 - **不扣住用户**：任何一步出错只 warn，规范化失败就原样放行（车道宁可 403，也不该因为我们抛错而让整轮失败）。
-- **补丁可回滚**：落盘前原文件进 `.lane-fix-orig/`，`--restore` 一键还原；那份备份丢了也不要紧——仓库里 `baseline/ofm-<版本>/` 存着上游原文当还原依据（现行 `baseline/ofm-2.5.0/`）。
+- **补丁可回滚**：落盘前原文件进 `.lane-fix-orig/`，`--restore` 一键还原；那份备份丢了也不要紧——仓库里 `baseline/ofm-<版本>/` 存着上游原文当还原依据（现行 `baseline/ofm-2.5.1/`）。
 
 ## 六、冒烟
 
