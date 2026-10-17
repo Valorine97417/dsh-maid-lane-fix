@@ -57,29 +57,29 @@ node scripts/patch-ofm.mjs --help       # 只看用法（v0.3.2 起：不认的�
 
 **为什么补丁器不自动跑**：它改的是**别人包里的文件**，而宿主插件在启动时静默改第三方文件是不该做的事（上游一升级、补丁就得重打，静默重打更糟）。所以它是显式 CLI：**你叫它，它才动**。锚点失配时整批中止、不写一半——上游改过这几行，它宁可报错也不猜。
 
-### 还原基线：`baseline/ofm-2.3.0/`
+### 还原基线：`baseline/ofm-<版本>/`
 
 `--restore` 靠的是**包目录里的** `.lane-fix-orig/`，而那份备份有两个弱点：只在第一次落盘时生成，且随时可能被清掉（`node_modules` 重装、上游升级覆盖、清理脚本扫过——本机 2026-10-15 实测被 sweep 连带清掉一次，`--restore` 当场 `exit 1`）。
 
-所以仓库里另存一份**上游 v2.3.0 的原文**当还原依据，跟代码一起走版本控制：
+所以仓库里另存一份**上游原文**当还原依据，跟代码一起走版本控制。每升一版存一份，目录名带版本号：
 
-| 压缩包 | 解出来是 | 原始 sha256 |
+| 目录 | 对应上游 | 三份 gzip -9 合计 |
 | --- | --- | --- |
-| `baseline/ofm-2.3.0/client.js.gz` | `client.js` | `21c387c6…1774b6` |
-| `baseline/ofm-2.3.0/index.js.gz` | `index.js` | `8d8a4b54…c74ff0` |
-| `baseline/ofm-2.3.0/src__http.js.gz` | `src/http.js` | `43b3cb0a…339ac9` |
+| `baseline/ofm-2.3.0/` | v2.3.0 | 179208 字节 |
+| `baseline/ofm-2.5.0/` | v2.5.0（现行） | 188606 字节 |
 
-三份 gzip -9 合计 179208 字节；解压回读的 sha256 与上游原文一致（全值见同目录 `SHA256SUMS` 与 `README.md`）。`src__http.js` 的 `__` 是补丁器备份文件的命名法，解出来要放回 `src/http.js`。
+每个目录里三份 `*.gz` + 一份 `SHA256SUMS`（全值见该文件），`src__http.js` 的 `__` 是补丁器备份文件的命名法，解出来要放回 `src/http.js`。冒烟脚本按目录扫，**新存一份基线不用改冒烟**，但清单必须与 `PATCHED_FILES` 完全对齐、sha256 必须对得上。
 
 ```bash
+# 换成你要的那一版目录
 PKG=~/.dsh/profiles/desktop/node_modules/dsh-our-free-model
-gunzip -c baseline/ofm-2.3.0/client.js.gz    > "$PKG/client.js"
-gunzip -c baseline/ofm-2.3.0/index.js.gz     > "$PKG/index.js"
-gunzip -c baseline/ofm-2.3.0/src__http.js.gz > "$PKG/src/http.js"
-node scripts/patch-ofm.mjs --dry-run         # 应报「7 处待应用」= 干净的 v2.3.0
+gunzip -c baseline/ofm-2.5.0/client.js.gz    > "$PKG/client.js"
+gunzip -c baseline/ofm-2.5.0/index.js.gz     > "$PKG/index.js"
+gunzip -c baseline/ofm-2.5.0/src__http.js.gz > "$PKG/src/http.js"
+node scripts/patch-ofm.mjs --dry-run         # 应报「7 处待应用」= 干净的原文
 ```
 
-**先确认包版本就是 v2.3.0**——基线对应的是这一版，往别的版本上盖等于换文件。上游发新版后锚点可能已变，要按同法重新导一份（`git archive vX.Y.Z <files> | tar -x`，再 `gzip -9c` 那三个文件）。
+**先确认包版本与基线目录一致**——往别的版本上盖等于换文件。上游发新版后锚点可能已变，要按同法重新导一份（`git archive vX.Y.Z <files> | tar -x`，再 `gzip -9c` 那三个文件），并补上 `SHA256SUMS`。
 
 `baseline/` 与 `docs/` 一样**故意不在 `files` 白名单**：`git clone` 看得到、`pnpm add` 装不到——它是档案，不是运行时要用的东西。
 
@@ -107,7 +107,7 @@ dsh plugin --profile desktop add "github:Valorine97417/dsh-maid-lane-fix"
 - **零运行时依赖**：不 import 任何 `@deepseek-ai/*`，`inject` 空数组，不注册路由、不带客户端半边——宿主缺服务时它也照常工作。
 - **可卸载**：走 `ctx.effect` 登记，插件卸载即恢复原 `fetch`；重复装配只复用已有那一层，不会叠 wrapper。
 - **不扣住用户**：任何一步出错只 warn，规范化失败就原样放行（车道宁可 403，也不该因为我们抛错而让整轮失败）。
-- **补丁可回滚**：落盘前原文件进 `.lane-fix-orig/`，`--restore` 一键还原；那份备份丢了也不要紧——仓库里 `baseline/ofm-2.3.0/` 存着上游原文当还原依据。
+- **补丁可回滚**：落盘前原文件进 `.lane-fix-orig/`，`--restore` 一键还原；那份备份丢了也不要紧——仓库里 `baseline/ofm-<版本>/` 存着上游原文当还原依据（现行 `baseline/ofm-2.5.0/`）。
 
 ## 六、冒烟
 
@@ -116,9 +116,9 @@ node scripts/smoke.mjs                          # 118 条：编码形状、端�
 OFM_DIR=<上游包目录> node scripts/smoke.mjs     # 追加真实上游分支：落盘字节必须"全部已应用"
 ```
 
-补丁器的**重放验证**（决定性）：拿 `.lane-fix-orig/` 三份原始文件搭一个干净包 → 跑补丁器 → 与真实落盘结果 `cmp` **三个文件逐字节一致**；再跑一次是「7 处已应用，0 个文件待改」。**手改过的注释也算补丁**，否则重放对不上——第一次就栽在这。`.lane-fix-orig/` 没了就用 `baseline/ofm-2.3.0/` 当原始文件，同一个验证照样能做。
+补丁器的**重放验证**（决定性）：拿 `.lane-fix-orig/` 三份原始文件搭一个干净包 → 跑补丁器 → 与真实落盘结果 `cmp` **三个文件逐字节一致**；再跑一次是「7 处已应用，0 个文件待改」。**手改过的注释也算补丁**，否则重放对不上——第一次就栽在这。`.lane-fix-orig/` 没了就用对应版本的 `baseline/ofm-<版本>/` 当原始文件，同一个验证照样能做。
 
-**还原基线也在冒烟里**：`baseline/ofm-2.3.0/*.gz` 解压后逐个核 sha256，对的是同目录 `SHA256SUMS`（改基线就得连清单一起改，对不上立刻红）。
+**还原基线也在冒烟里**：`baseline/ofm-*/*.gz` 按目录逐个解压核 sha256，对的是同目录 `SHA256SUMS`（改基线就得连清单一起改，对不上立刻红）；清单覆盖的文件还必须与 `PATCHED_FILES` 完全对齐。
 
 **端到端验证**（2026-10-14，本机）：
 - 中间层——取上游**未修版** `upstream.js`/`http.js`/`probe.js` 装上本层，带被点名的归属 UA 跑 `probeModel()` → 车道恢复；装前 `❌ UpstreamError`、装后 `✅ 200`，卸载立刻复现 403。

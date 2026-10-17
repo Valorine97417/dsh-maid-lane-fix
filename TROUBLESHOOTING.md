@@ -26,7 +26,7 @@
 - **症状**：`找不到 dsh-our-free-model，请用 --dir 指定包目录`（exit 1）。
 - **原因**：自动定位只有两个候选，够不到别的落点：
   `~/.dsh/profiles/desktop/node_modules/dsh-our-free-model` → 再 `~/.dsh/profiles/web/node_modules/dsh-our-free-model`。
-- **解法**：`node scripts/patch-ofm.mjs --dir <包目录>`。本机是 junction，脚本会 `realpath` 解开：`~/.dsh/profiles/desktop/node_modules/dsh-our-free-model` → `D:\DeepSeek Harness\Works\_vendor\dsh-our-free-model-2.4.0`（2026-10-17 搬迁后的位置；旧位置是 `D:\Downloads\dsh-our-free-model-2.1.0`）。
+- **解法**：`node scripts/patch-ofm.mjs --dir <包目录>`。本机是 junction，脚本会 `realpath` 解开：`~/.dsh/profiles/desktop/node_modules/dsh-our-free-model` → `D:\DeepSeek Harness\Works\_vendor\dsh-our-free-model-2.5.0`（2026-10-17 搬迁后的位置；旧位置是 `D:\Downloads\dsh-our-free-model-2.1.0`）。
 - **验证**：`--dry-run` 首行打印 `补丁集 v1 → <解开的真实包目录>`；地址不对就说明走错了包。
 
 ### 1.3 「补丁器为什么不挂到插件启动流程里？」
@@ -60,7 +60,7 @@
 ### 1.6 目录名 ≠ 版本号（别按路径判版本）
 
 - **症状**：看到包目录名带版本号，以为补丁打在别的版本上；或在旧资料里看到 `dsh-our-free-model-2.1.0` 这个路径，找不到包。
-- **原因**：本机包目录是早期 clone 留下的名字，内部 `package.json` 早已升级。**2026-10-17 已搬迁并改名对齐版本**：现行落点 `D:\DeepSeek Harness\Works\_vendor\dsh-our-free-model-2.4.0`（内部 `version` = `2.4.0`）；`D:\Downloads\dsh-our-free-model-2.1.0` 是历史路径，已不存在。搬迁同步改了四处：物理目录、profile `package.json` 的 `link:`、junction、两个 lockfile。
+- **原因**：本机包目录是早期 clone 留下的名字，内部 `package.json` 早已升级。**2026-10-17 已搬迁并改名对齐版本**：现行落点 `D:\DeepSeek Harness\Works\_vendor\dsh-our-free-model-2.5.0`（内部 `version` = `2.5.0`）；`D:\Downloads\dsh-our-free-model-2.1.0` 是历史路径，已不存在。搬迁同步改了四处：物理目录、profile `package.json` 的 `link:`、junction、两个 lockfile。
 - **解法**：一律以 `package.json` 的 `version` 为准，路径只认现行 `_vendor` 落点。
 - **验证**：`grep -m1 '"version"' "$PKG/package.json"`。
 
@@ -124,16 +124,16 @@
   | `index.js` | `8d8a4b54…c74ff0` | 一致 |
   | `src_http.js` | `2afb523e…b866b83` | **不一致** |
   即：`--restore` 会把 `client.js` / `src/http.js` 退回备份那一刻的内容，**不等于** v2.3.0 原文。
-- **解法**：要回「干净的上游原文」，用仓库里的基线，不用 `--restore`：
+- **解法**：要回「干净的上游原文」，用仓库里的基线，不用 `--restore`。**基线按版本分目录，用与包版本一致的那一份**（现行 `baseline/ofm-2.5.0/`）：
   ```bash
   PKG=~/.dsh/profiles/desktop/node_modules/dsh-our-free-model
-  gunzip -c baseline/ofm-2.3.0/client.js.gz    > "$PKG/client.js"
-  gunzip -c baseline/ofm-2.3.0/index.js.gz     > "$PKG/index.js"
-  gunzip -c baseline/ofm-2.3.0/src__http.js.gz > "$PKG/src/http.js"
+  gunzip -c baseline/ofm-2.5.0/client.js.gz    > "$PKG/client.js"
+  gunzip -c baseline/ofm-2.5.0/index.js.gz     > "$PKG/index.js"
+  gunzip -c baseline/ofm-2.5.0/src__http.js.gz > "$PKG/src/http.js"
   ```
   注意 `src__http.js` 里的 `__` 是补丁器备份命名法，解出来要放回 `src/http.js`。
-- **验证**：解压后 sha256 必须与 `baseline/ofm-2.3.0/SHA256SUMS` 三行一致；`--dry-run` 应报「7 处待应用」而不是「已应用」。
-- **前置硬条件**：**先确认包版本就是 v2.3.0**——基线对应这一版，往别的版本上盖等于换文件。上游发新版后要按同法重导：`git archive vX.Y.Z <files> | tar -x`，再 `gzip -9c` 那三个文件，并同步改 `SHA256SUMS`。
+- **验证**：解压后 sha256 必须与 `baseline/ofm-2.5.0/SHA256SUMS` 三行一致；`--dry-run` 应报「7 处待应用」而不是「已应用」。
+- **前置硬条件**：**先确认包版本与基线目录一致**——基线对应特定一版，往别的版本上盖等于换文件。上游发新版后要按同法重导：`git archive vX.Y.Z <files> | tar -x`，再 `gzip -9c` 那三个文件，新建 `baseline/ofm-<新版>/` 并写 `SHA256SUMS`（冒烟按目录扫，不用改脚本）。
 
 ### 2.6 报告 7 行，注释却写「四处补丁」
 
@@ -329,7 +329,7 @@
 | 本插件仓库 | `D:\DeepSeek Harness\Works\dsh-maid-lane-fix` |
 | 插件安装点 | `~/.dsh/profiles/desktop/node_modules/dsh-maid-lane-fix`（junction → 工作副本；`web` profile 未装） |
 | 上游包（profile 内） | `~/.dsh/profiles/desktop/node_modules/dsh-our-free-model`（junction） |
-| 上游包（真实落点） | `D:\DeepSeek Harness\Works\_vendor\dsh-our-free-model-2.4.0`（2026-10-17 从 `D:\Downloads\dsh-our-free-model-2.1.0` 搬迁并改名对齐；**不是 git 仓库**） |
+| 上游包（真实落点） | `D:\DeepSeek Harness\Works\_vendor\dsh-our-free-model-2.5.0`（2026-10-17 从 `D:\Downloads\dsh-our-free-model-2.1.0` 搬迁并改名对齐；**不是 git 仓库**） |
 | 补丁备份目录 | `<包目录>/.lane-fix-orig/`（实测内容：`client.js`、`index.js`、`src_http.js`） |
 | 还原基线 | `baseline/ofm-2.3.0/{client.js.gz,index.js.gz,src__http.js.gz}` + `SHA256SUMS` |
 | 上游补丁档案 | `docs/ofm-upstream-patches.md` / `docs/ofm-upstream-patches.patch` |
@@ -367,7 +367,7 @@
 1. **先体检，别先落盘**：`node scripts/patch-ofm.mjs --dry-run`。三种状态字形一眼分：`✓ 已应用` / `· 待应用` / `✗ 锚点失配`。
 2. **落盘后必验**：`node scripts/patch-ofm.mjs --verify`。它不比对「看起来像」，而是逐字节核对落盘结果与补丁集一致；不过就 `exit 1`。
 3. **跑冒烟**：`node scripts/smoke.mjs` —— 本机 2026-10-16 实测 `117 PASS / 0 FAIL`（README 说的「118 条」含下面那条需要 `OFM_DIR` 的分支，plain 模式不跑它，所以是 117）。
-   追加真实上游分支：`OFM_DIR="D:/DeepSeek Harness/Works/_vendor/dsh-our-free-model-2.4.0" node scripts/smoke.mjs` —— 在**未打补丁**的包上会红一条，这是预期的：
+   追加真实上游分支：`OFM_DIR="D:/DeepSeek Harness/Works/_vendor/dsh-our-free-model-2.5.0" node scripts/smoke.mjs` —— 在**未打补丁**的包上会红一条，这是预期的：
    `FAIL 真实上游：全部已应用 ["bench-deadline=ready","idle-clock-comment=ready",…]`
    打上之后应全部 `applied`。这条是「包到底打没打」的一键判据。
 4. **核基线**：冒烟里已含 `baseline/ofm-2.3.0/*.gz` 解压后逐个核 sha256（对 `SHA256SUMS`）；手工核也行：
