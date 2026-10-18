@@ -178,6 +178,16 @@
 
 > **通用教训**：任何「默认动作会写盘」的脚本，都必须先做参数白名单校验。查询类旗标（`--help`）被静默忽略、反而触发写盘，是比锚点失配更难查的一类事故——它不报错，只是默默把文件改了。
 
+### 2.10 EAC 长会话 HTTP 413：8 MiB 是网关限制，不是宿主限制（2026-10-18）
+
+- **症状与硬证据**：上游 `/eac/v1/chat/completions` 对精确 8388608 bytes 的请求通过体积关、8388609 bytes 返回 HTTP 413。通过体积关不等于模型成功返回；不能声称客户端补丁解除上游限制。
+- **修复**：补丁集 v3 共 11 处、跨 `client.js` / `index.js` / `src/http.js` / `src/eac.js`。新增 `eac-body-limit-constant`、`eac-body-limit-before-send`、`eac-413-restated`。对最终 `JSON.stringify(body)` 仅做一次 UTF-8 字节计数；只在 `> 8388608` 时于签名/transport 之前拒绝。等于上限必须放行；中文不能用字符数代替字节数。
+- **报错**：本地超限与上游 413 均为简体中文说明，包含 8 MiB / 8388608 bytes 及缩短会话、移除附件或图片、新会话建议；使用 `new UpstreamError(message, CODE.client, details)`。真实 adapter 可重试集合仅含 `EMPTY_RESPONSE / SERVER / TIMEOUT / TRANSPORT`，因此 `CLIENT_ERROR` 不可重试；上游 413 不透传响应原文或 Retry-After。
+- **基线与还原**：`baseline/ofm-2.5.3/SHA256SUMS` 已补 `src/eac.js`，原文 SHA256 为 `359f5729ab22bdf406c6f1c0c4817eb1a1b6f3099c07dcaeb1558503333314b5`；来源交叉核对见该目录 README。历史三文件基线保持原契约，不伪造旧版本 EAC 原文。补丁器 `--verify` 现真正按当前版本干净基线重放并逐字节核验（此前仅 marker 判定）；`--restore` 先整批校验备份等于当前版本基线，拒绝旧版/脏备份，避免 2.5 的历史事故。
+- **验证**：`node scripts/smoke.mjs` → 140 PASS；设置 `OFM_DIR` 为现役安装后 → 141 PASS。`node scripts/eac-body-limit-test.mjs` → 32 PASS；`EAC_USE_INSTALLED=1 node scripts/eac-body-limit-test.mjs` → 同为 32 PASS，读取现役文件进行行为验证。覆盖 ASCII/中文的 8388607、8388608、8388609 bytes、签名字节不变、超限零 transport、正常 SSE/JSON、413 的纯文本/JSON/HTML 响应、500 分类、CLI 幂等、干净还原及错备份整批拒绝；全套真实出网次数为零。
+- **本机落盘**：现役实体目录 `C:/Users/Kayle/.dsh/profiles/desktop/node_modules/dsh-our-free-model`，版本 2.5.3。先备份 `src/eac.js.bak-eac-pre-2026-10-18T08-08-03-872Z`，再由现有 `scripts/patch-ofm.mjs --dir <现役目录>` 应用，仅写 `src/eac.js`（15592 bytes），其余三文件保留；`--verify` 全部 11 处通过。改后 EAC SHA256 `fe8bb92542a7e3efb3fa4768ad159f917a9c3cd583372870eff56e3722a8d4d3`。四份 `.lane-fix-orig/` 备份均与 2.5.3 基线逐字节相等；现役文件及补丁器语法检查通过。
+- **运行状态**：磁盘已应用；未重启宿主、未让现有进程重新加载，故不宣称当前 GUI 会话已使用新逻辑。未提交、未 push；本次未重放真实上游大请求，边界上游证据沿用先前测量。
+
 ## 三、指纹规范化相关的坑
 
 ### 3.1 装了中间层，还是 403 —— 第四道门在传输层
