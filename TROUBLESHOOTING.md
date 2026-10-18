@@ -138,6 +138,13 @@
 - **验证**：解压后 sha256 必须与 `baseline/ofm-2.5.0/SHA256SUMS` 三行一致；`--dry-run` 应报「7 处待应用」而不是「已应用」。
 - **前置硬条件**：**先确认包版本与基线目录一致**——基线对应特定一版，往别的版本上盖等于换文件。上游发新版后要按同法重导：`git archive vX.Y.Z <files> | tar -x`，再 `gzip -9c` 那三个文件，新建 `baseline/ofm-<新版>/` 并写 `SHA256SUMS`（冒烟按目录扫，不用改脚本）。
 
+- **补充（2026-10-18，`.gitattributes` 锁基线字节——未复现的预防性加固）**：
+  - **事实**：提交 `a862ce7`「chore: 加 .gitattributes 锁住基线字节」只新增 7 行：`*.gz binary` 与 `baseline/**/SHA256SUMS text eol=lf`（附三行中文注释）。动机是提交正文自陈的，**本机未取到任何字节漂移的现场**——这条不是事后复盘，是事前加固。
+  - **对照实验（未复现）**：临时仓里放一份 CRLF 的 `SHA256SUMS` 与一个 256 字节假 `.gz`，分别在「有 `.gitattributes`」与「删掉 `.gitattributes`」两种情形下用 `core.autocrlf=true` 检出并比对：两边的 `SHA256SUMS` **sha256 完全相同**（无 CR 字节），`.gz` 也是 256 字节原样。
+  - **机制（为什么正常路径不会漂）**：`core.autocrlf=true` 的转换发生在**入库与检出两端**，一旦入库内容已被归一为 LF，检出端不会再吐出 CRLF——所以只靠 autocrlf 通常坏不了文本文件的字节。真正会坏字节的是另一条路：**`.gz` 被当成文本处理**（二进制启发式判定失手时会走文本转换）；`*.gz binary` 这条声明才是主要价值所在，`SHA256SUMS text eol=lf` 属于把解析器的期望显式钉死。
+  - **验证**：未验证 / 未复现。若要真复现漂移，最小判据是：仓库里存一份**含 CRLF 入库**的文本（即入库时未经归一）+ 一个扩展名不被识别为二进制的压缩包，再用 `core.autocrlf=true` 克隆对比 sha256——只有在这种前置条件下才可能看到差异。
+  - **教训**：加固提交的标题容易在后来被读成「以前真出过事」。写这类条目必须把「动机自陈」与「已复现的故障」分开写，否则半年后会有人照着它去查一场从未发生的漂移。
+
 ### 2.6 报告 7 行，注释却写「四处补丁」
 
 - **症状**：`--dry-run` 列出了 7 行补丁，但 `lib/ofm-patch.js` 与 `scripts/patch-ofm.mjs` 的文件头注释写的是「四处补丁 / 这四处毛病」。
@@ -248,6 +255,10 @@
 - **解法**：`normalizeTools()` 无条件补指纹（只对带 `model` 的像是聊天请求的 body 动手）：补 `FINGERPRINT_TOOLS = ['bash','glob','grep','read']` 里的缺项（诱饵），空的 schema 补一个 property；**请求本来一个客户端工具都没有时**，把 `tool_choice` 锁成 `'none'`（否则模型可能真去调诱饵）。
 - **验证**：冒烟断言 `没有 tools 字段 → 照样补指纹` + `tool_choice 锁成 none` + 幂等。
 
+- **补充（2026-10-17 实测，两道闸门会互相污染）**：这道门与「会话头形态」是**两道彼此独立的闸门**。同一个合法降序会话头（本该 200），**带官方 tools 就 200，不带就全 403**。小困第一次跑会话头四形态对照时忘了带 tools，四条**全部 403**（连本该 200 的 mint 形态也 403），差点据此误判成「降序编码根本过不了」。
+- **做法（固定一个维度，只变另一个）**：判「403 是哪道门挂的」之前，先确认 `body.tools` 里 `bash` 与 `read` 的官方定义同时在场（记忆原文写作「read+shell 官方定义」，代码侧常量以 §5.2 的 `REQUIRED_TOOLS = ['bash','read']` 为准，`FINGERPRINT_TOOLS` 另含 `glob`/`grep`）；把 tools 钉死为官方定义，再**一次只变会话头这一个维度**，否则每一格数据都被这道门污染，矩阵整张作废。
+- **验证**：同一 body 只摘掉 `tools` 字段 → 复现全 403；补回 `bash` + `read` 官方定义、其余字节不动 → 恢复到该会话头形态应有的 200/403。§3.2 的「探针怎么改都是 403」是同一类误判的另一副面孔，两条对照着看。
+
 ### 3.5 极少数请求仍旧 403（约 0.39%）
 
 - **症状**：整体通了，但偶尔单条 403。
@@ -281,6 +292,17 @@
 - **只碰一个主机**：白名单写死 `opencode.ai`，其它请求（别的提供方、你自己的 API）**逐字节透传**，连 `init` 对象都不换；且**必须有车道标记头**（`x-opencode-session` / `x-opencode-request`）才动手，已合规的请求一律放行（`normalizedRequest` 返回 `null`）。
 - **body 只在能安全改时改**：工具指纹只对 `body` 是 JSON 字符串的请求生效，`ReadableStream` / `FormData` / 空体一律跳过、不猜不造；**任何一步出错只 warn**，原样放行——车道宁可 403，也不该因为我们抛错而让整轮失败。
 - **验证**：`node scripts/smoke.mjs`（挂载/卸载、重复装配不叠 wrapper、非车道请求 `init` 未被包装）。
+
+### 3.10 给「会真出网」的模块写离线测试：零真实连接的写法
+
+- **症状**：要给 EAC poster 这类**天生会打真实 HTTP** 的模块补离线测试，两难——不注入就真出网（测试变成真请求、慢且脏），注入了又怕「测试全靠 mock、等于什么都没验」；另外凭据字段总得填点什么，填了又怕把假值写进仓库。
+- **原因**：这类模块的出网点收敛在**一个 transport seam**（可替换的请求函数）上，而不是散在各处。只要从 seam 注入，被测逻辑（签名、body 上限、413 解析、重试判定）就全都还是真代码在跑；出网与否跟「被测逻辑是否真实」并不冲突。
+- **解法**：三条一起用。
+  1. **域名一律用 `.invalid`**：`https://offline.invalid/eac/v1`。RFC 2606 保证这个 TLD 永远不可解析，即使某次注入失手真的发出去，也只会 DNS 失败，**不会打到任何真实主机**。
+  2. **从 transport seam 注入假请求函数**，不打真实连接；并在测试开头**把真实出网通道全部钉死**成抛错桩——`http.request` / `https.request` / `globalThis.fetch` 三者一起换成 `forbidden`，谁绕过 seam 就直接炸，测试结束时还原。
+  3. **凭据用一眼可辨的假值**：`signingSecret: 'offline-test-not-a-credential'`（示例假值、非真实密钥）。
+- **验证**：测试跑完，`sends` 计数等于预期发送次数（全部来自注入的 seam），真实 `http/https/fetch` 一次都没被调用；断网环境（或临时把 `offline.invalid` 写进 hosts）下测试结果不变。本机落点：`scripts/eac-body-limit-test.mjs`——`base: 'https://offline.invalid/eac/v1'`、`signingSecret: 'offline-test-not-a-credential'`（示例假值、非真实密钥）、`http.request = https.request = globalThis.fetch = forbidden`、`lane.fetch = async (url, request) => …` 注入。
+- **教训（真正会咬人的那一下）**：推代码前跑敏感词扫描，`offline-test-not-a-credential` 这类串**必然命中**。**别一命中就当泄露回滚**——先看它自不自证：域名是不是 `.invalid`、值里是不是明写 `not-a-credential` / `test` / `fake`。反过来也成立：写假凭据时**主动**让值自带这种自证标记，省下将来每一个人的一次惊慌。
 
 ## 四、与 dsh-our-free-model 的版本联动
 
@@ -366,6 +388,20 @@
   - **CodeArts `codearts-signed-headers` + `codearts-signed-decl`**：两处必须**同时**应用。旧补丁只改 canonical 未改 `SignedHeaders` 声明数组，而上游 `headers.forEach((_, k) => { if (k.toLowerCase() !== "content-type") signedHeaders.push(k); })` 把除 `content-type` 外的所有头签进签名，而 `x-sdk-date` / `x-sdk-content-sha256` 是在签名后才 `set` 的——于是验签必失败。判据：**`401` 变 `429` 就说明验签已过**，429 是限流；别以「最终是否 200」作为补丁生效的唯一判据。
   - **trae / lobsterai 的「额度用尽」**：`trae: Your requests have exceeded the quota. (code=4008)` 与 `lobsterai: 所有账号均不可用（免费额度已用完，请升级套餐）` 都是**模型级限流**被网关包成了「凭据/额度坏了」的话术。判据：停手等标记过期（2026-10-17 实测 12:36 恢复）。限流与凭据失效要分清：**重登、重试、反复探针这三件事，对限流全是负收益**。
 - **验证**：日志白纸黑字 `bili_resign_unavailable`；passthrough 配置后同请求 200 出词。
+
+- **补充 A（2026-10-17 00:25 复验闭环 + 三条教训）**：
+  - **复验**：经网关 8326 发 `codearts/deepseek-v4-flash` 取 **HTTP 200 真出词**（正文 `"收到"` + `reasoning_content`）。即 `"resign":{"sdk-hmac-sha256":{"passthrough":true}}` 之后签名链不再被压缩改写（备份文件名 `bak-resign-passthrough-20261016-235912`）。
+  - **顺带暴露的良性行为**：插件对 `TM.00001041`（并发会话上限 3）自带 3 次 × 10.5s 轮询重试，能扛过瞬时会话堆积——**`400` 会自动恢复，不是死态**，别拿它当「凭据坏了」的证据去重登。
+  - **教训一（判据别混）**：台账第 4 行 `content-type 退出签名` 改的是**真 bug**（直连矩阵单变量证实过），但它**不是 403 的本因**。别把「修了真 bug」当成「修了症状」——本次就是五处修复全落盘、codearts 仍全 403。
+  - **教训二（先问谁写的响应体）**：中间层（压缩/代理）会自己制造 403。抛错点只抛 `codearts: model request failed with HTTP 403`（册内上文记作 `pack.js:33064`，本轮**未复核该行号**）、**响应体直接丢弃**，所以必须在日志层抓 body；抓到 `bili_resign_unavailable` 才定案。
+  - **教训三（探针要有超时）**：长任务中途触发的脚本必须带 `AbortSignal.timeout`，否则网关慢响应会把探针挂到 120s+ 才自己放弃。
+  - **证据强度**：A（有原始响应体 `signed_request_requires_resign / bili_resign_unavailable` 与 200 出词两端原文）。
+
+- **补充 B（2026-10-18，OFM 2.5.3 核对时的修正：五条里两条已被上游内建）**：
+  - **已被上游自带的**：① `false-risk-11128`（台账第 2 行）；② `wb-conversation-headers`。后者上游实现得更正确——`pack.js:35552-35556` 用 `this.product.id === "workbuddy"` 注入 `X-Conversation-ID`（取实例级稳定 `this.sessionId`）/ `X-Conversation-Message-ID` / `X-Conversation-Request-ID`（后两个 `crypto.randomUUID()`）。稳定 sessionId 比补丁的「每请求新 UUID」更贴近上游语义；**强打会被同 key 覆盖，净效果为零**。故台账第 1 行的状态从「冗余保险」进一步放宽为「可移入观察点」。
+  - **缺的那半：codearts 两条被一个异常锚点连坐**。`codearts-signed-headers` 与 `codearts-signed-decl` 必须同时落盘（见上文「验签必失败」那条），但它们**落不了盘**：只要 `false-risk-11128` 仍留在补丁器的 `PATCHES` 里报锚点异常，那套补丁器就整批中止、一个字节都不写——所以 codearts 两条会长期停在「待应用」。lane-fix 侧的结论只有一句：**先把这个已被上游内建的补丁降级或删除，codearts 那两条才有机会落盘**，不要反复重跑落盘命令等它自己好。
+  - **证据强度**：A（`pack.js:35552-35556` 逐行核对原文：`if (this.product.id === "workbuddy") {` / `headers.set("X-Conversation-ID", this.sessionId);`）。
+  - **未取证**：`pack.js:34915`（sessionId 的构造点）本机核对时未定位到该行号，只有 `35553` 引用 `this.sessionId` 这一侧的证据；补丁器「整批中止」的实现代码不在本仓，由 patch-kit 册记录。
 
 **备份台账**（按时间序，都在 `<上游包>/vendor/channel-pack/`）：`bak-ofm-patch-20261016-200606`（2881789B）→ `bak-codearts-sig-20261016-201657`（2882226B）→ `bak-false-risk-20261016-202625`（2882513B）→ `bak-codearts-diag-20261016-204044`（2883203B）→ `bak-benefit4004-20261017-002745`（2883449B）；最终 pack.js 2883612 字节，md5 `801850a2880be6ea3a55fb731510db00`。
 
