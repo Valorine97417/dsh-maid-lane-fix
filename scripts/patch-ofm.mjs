@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 把 `lib/ofm-patch.js` 的四处补丁落到上游 `dsh-our-free-model` 包上。
+ * 把 `lib/ofm-patch.js` 的补丁集落到上游 `dsh-our-free-model` 包上。
  *
  * 用法：
  *   node scripts/patch-ofm.mjs                    # 自动找包，体检 + 落盘
@@ -9,7 +9,7 @@
  *   node scripts/patch-ofm.mjs --restore          # 从 .lane-fix-orig/ 回滚
  *   node scripts/patch-ofm.mjs --verify           # 逐字节核对落盘结果（改完必跑）
  *
- * 为什么是"脚本改文件"而不是"运行时包一层"：这四处毛病在**上游的解析与账本**
+ * 为什么是"脚本改文件"而不是"运行时包一层"：这些毛病在**上游的请求边界、解析与账本**
  * 里，不在出网层——中间层能规范化请求，却改不了"错误 JSON 被静默丢弃"。
  * 所以这里直接改字节，但把幂等、体检、备份、回滚、逐字节校验都做齐，
  * 让它跟"手改 node_modules"区分开：可重复、可审计、可撤销。
@@ -167,6 +167,11 @@ if (has('--restore')) {
     console.error(`没有备份，无法回滚：${missing.map(row => row.name).join('、')}`)
     process.exit(1)
   }
+  // 不把旧版本或已修改状态备份当作原文恢复；全部核对后才允许写入。
+  const baseline = loadBaseline(root)
+  if (baseline === null) throw new Error('缺少当前版本干净基线，拒绝回滚')
+  const invalid = backups.filter(row => fs.readFileSync(row.from, 'utf8') !== baseline.files[row.name])
+  if (invalid.length > 0) throw new Error(`备份与当前版本干净基线不符，拒绝回滚：${invalid.map(row => row.name).join('、')}`)
   for (const row of backups) fs.copyFileSync(row.from, row.to)
   console.log(`已从 ${BACKUP_DIR}/ 回滚 ${backups.length} 个文件。`)
   process.exit(0)
@@ -182,7 +187,12 @@ if (has('--verify')) {
     console.error(`\n有 ${stale.length} 处不是"已应用"状态——落盘结果与补丁集不一致。`)
     process.exit(1)
   }
-  console.log('\n全部已应用，且落盘字节与补丁集完全一致。')
+  const baseline = loadBaseline(root)
+  if (baseline === null) throw new Error('缺少当前版本干净基线，无法逐字节核对')
+  const expected = applyPatchSet(baseline.files).files
+  const different = PATCHED_FILES.filter(name => expected[name] !== files[name])
+  if (different.length > 0) throw new Error(`落盘与干净基线重放结果不一致（保留现场，不自动覆盖）：${different.join('、')}`)
+  console.log('\n全部已应用，且落盘字节与干净基线重放结果完全一致。')
   process.exit(0)
 }
 

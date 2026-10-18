@@ -325,9 +325,11 @@ check('车道主机白名单只列 opencode.ai', /LANE_HOSTS = Object\.freeze\(\
     const sums = readFileSync(root(`baseline/${d}/SHA256SUMS`), 'utf8')
       .trim().split('\n')
       .map(line => { const [hash, name] = line.trim().split(/\s+/); return { hash, name } })
-    check(`${d} 清单列了 ${PATCHED_FILES.length} 个文件`, sums.length === PATCHED_FILES.length, String(sums.length))
-    check(`${d} 清单覆盖的正是补丁目标文件`,
-      sums.map(s => s.name).sort().join() === [...PATCHED_FILES].sort().join(),
+    // 历史基线保留当时的三文件契约；2.5.3 起才新增 EAC 请求边界补丁。
+    const expectedFiles = d === 'ofm-2.5.3' ? PATCHED_FILES : ['client.js', 'index.js', 'src/http.js']
+    check(`${d} 清单列了 ${expectedFiles.length} 个文件`, sums.length === expectedFiles.length, String(sums.length))
+    check(`${d} 清单覆盖对应版本的补丁目标文件`,
+      sums.map(s => s.name).sort().join() === [...expectedFiles].sort().join(),
       sums.map(s => s.name).join(' '))
     for (const { hash, name } of sums) {
       const gz = root(`baseline/${d}/${name.replace(/\//g, '__')}.gz`)
