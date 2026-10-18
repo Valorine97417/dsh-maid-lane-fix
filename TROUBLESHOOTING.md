@@ -200,6 +200,8 @@
 - **原因**：补丁插在 `await sleepMs(waitMs)` 处，把等待改写成 `Math.max(waitMs, 600)`。上游 2.4.0 新增了**模型级饱和重试**分支（`isModelSaturationError`，报文 `14003 model busy`），该分支的 `waitMs = buddySaturationDelayMs(attempt) ≈ 2000 * n`，恒 ≥ 2000ms，于是 `Math.max(waitMs, 600)` 永远等于 `waitMs`——补丁退化成空操作：**锚点还在、行也改了、行为没变**。而真正的换号路径在 `BuddyAdapter.stream` 里（`if (this.options.accountPool && isRateLimited(errorText, response.status))`，原 `pack.js:35479-35530`），那条路径上**没有任何延迟**。
 - **解法**：把锚点搬到换号真正发生的位置——`const next = await this.options.accountPool.getAvailableAccount(...)` 成功之后、`response = await this.send(credential, body, options)` 之前插入 600ms 等待，并带 abort 守卫（宿主取消时不吞掉中断）。首个请求在 `pack.js:35357` 之前发出，不经这层延迟。
 - **验证**：`node scripts/patch-pack.mjs --verify` → `4 处已应用 / 0 待应用 / 0 锚点异常`；`node scripts/smoke.mjs` → `18 通过 0 失败`（2026-10-18 实测）。
+- **验证命令路径更正（2026-10-19 00:2x 复核）**：`patch-pack.mjs` **不在本仓 `scripts/` 里**——本仓 `scripts/` 只有 `patch-ofm.mjs` / `smoke.mjs` / `eac-body-limit-test.mjs`。车道补丁器实际在 `~/.dsh/our-free-model/patchkit/scripts/patch-pack.mjs`，且执行时 cwd 要落在 `~/.dsh/our-free-model`（它按相对位置找 `profiles/desktop/node_modules/dsh-our-free-model/vendor/channel-pack/pack.js`）。照上面那行在仓根敲会 `MODULE_NOT_FOUND`。
+- **重跑结果（2026-10-19 00:2x）**：同一命令现报 `已应用 0 / 待应用 4 / 锚点异常 0`、exit 1、末行 `尚未全部应用——跑一次不带参数的 patch-pack.mjs 落盘。`——**4 个锚点全部唯一命中、只是落盘被上游覆盖冲掉**（见 2.3 的 2026-10-18 20:15 实测）。即本条记录的打法本身没被上游升版顶掉，失效原因是「打完又被覆盖」。
 - 证据：提交 `2635396`（`docs: 归档 OFM 2.5.3 两个尾项补修与可重放记录 (swap-min-interval & benefit-bare-4004)`，2026-10-18 17:15），正文 `docs/ofm-2.5.3-tail-fixes-20261018/README.md:1-204`。
 - **教训**：「锚点命中 + 行已改」不等于补丁有效。上游只要在锚点附近插一个恒等变换的分支，`Math.max`、`|| 默认值`、`if (!x) x = …` 这类写法就会静默失效——验证必须验**行为**（换号间隔实测 > 0），不能只验 patch 已应用。
 
@@ -210,7 +212,7 @@
 - **症状**：带 `maas_type: "benefit"` 头的请求，上游在 **HTTP 200 的 SSE 首帧**里回业务错误；插件没有走「无权益 → 摘掉 benefit 头重试」的逻辑，而是直接抛 `INVALID_REQUEST`，v4.1-flash 一直失败。
 - **原因**：上游只做**全串等值匹配**——`CODEARTS_BENEFIT_NOT_FOUND_ERROR_CODE = "InferHub.4004.200"`；实测常常只回裸 `data.error_code === "4004"`（华为云 APIG / InferHub 两种口径都出现过）。裸值匹配不上，代码落进 `throw new LlmError2(\`codearts: ${message2}\`, "INVALID_REQUEST", { status: 200 })`，外层 `error.code === BENEFIT_NOT_FOUND_CODE && isBenefitModel && !benefitHeaderDropped` 这个分支**永远不会命中**，摘戳重试自然不触发。补丁要生效必须同时改两处：判定处 + 抛错类型（只加 `||` 判断、仍抛 `INVALID_REQUEST` 的话外层照样不认）。
 - **解法**：`CodeArtsAdapter.consumeSse` 内把判定扩为 `data.error_code === CODEARTS_BENEFIT_NOT_FOUND_ERROR_CODE || data.error_code === "4004" || String(data.error_code) === "4004"`，并统一抛 `BENEFIT_NOT_FOUND_CODE`，让外层重试分支能命中；两个补丁从 `WATCHPOINTS` 升级进 `patchkit/patches.mjs` 的 `PATCHES`（**升格后才会被 `--verify` 与重放核对**，留在 WATCHPOINTS 里等于没人管）。
-- **验证**：`--verify` 报 4 处已应用、`smoke` 18/18 通过；`pack.js` 由 `2765888` 字节变为 `2766877` 字节，打补丁前备份 `pack.js.bak-repatch-20261018-171346211`（2026-10-18 实测）。
+- **验证**：`--verify` 报 4 处已应用、`smoke` 18/18 通过；`pack.js` 由 `2765888` 字节变为 `2766877` 字节，打补丁前备份 `pack.js.bak-repatch-20261018-171346211`（2026-10-18 实测）。命令的真实路径与 2026-10-19 的重跑结果见 2.11 的「验证命令路径更正」——与换号补丁同落盘、同被覆盖，两者一起掉。
 - 证据：提交 `2635396`，正文 `docs/ofm-2.5.3-tail-fixes-20261018/README.md:90-140`。
 - **教训**：上游同时存在「全串错误码」与「裸错误码」两种口径时，只按文档里的全串写判据必然落空；判据写宽之后还要确认**抛出的错误类型**能触发外层分支，否则前面改了也白改。
 
