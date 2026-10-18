@@ -181,6 +181,7 @@
 ### 2.10 EAC 长会话 HTTP 413：8 MiB 是网关限制，不是宿主限制（2026-10-18）
 
 - **症状与硬证据**：上游 `/eac/v1/chat/completions` 对精确 8388608 bytes 的请求通过体积关、8388609 bytes 返回 HTTP 413。通过体积关不等于模型成功返回；不能声称客户端补丁解除上游限制。
+- **原因**：长会话携带全量历史，请求体随轮次线性膨胀，最终撞上**上游 EAC 网关**（`/eac/v1/chat/completions`）的请求体上限——网关对 8388608 bytes 放行、8388609 bytes 直接返回 413。限制在上游那一侧，与宿主、客户端无关；因此改面板上限、改 forward 参数、改 vendor 侧本地常量统统无效，云端不认，本地常量改多大都过不去。补丁能做的只有「在签名与 transport 之前本地拦下」，把一句看得懂的中文说明交给用户，而不是让请求跑到上游吃一个裸 413。
 - **修复**：补丁集 v3 共 11 处、跨 `client.js` / `index.js` / `src/http.js` / `src/eac.js`。新增 `eac-body-limit-constant`、`eac-body-limit-before-send`、`eac-413-restated`。对最终 `JSON.stringify(body)` 仅做一次 UTF-8 字节计数；只在 `> 8388608` 时于签名/transport 之前拒绝。等于上限必须放行；中文不能用字符数代替字节数。
 - **报错**：本地超限与上游 413 均为简体中文说明，包含 8 MiB / 8388608 bytes 及缩短会话、移除附件或图片、新会话建议；使用 `new UpstreamError(message, CODE.client, details)`。真实 adapter 可重试集合仅含 `EMPTY_RESPONSE / SERVER / TIMEOUT / TRANSPORT`，因此 `CLIENT_ERROR` 不可重试；上游 413 不透传响应原文或 Retry-After。
 - **基线与还原**：`baseline/ofm-2.5.3/SHA256SUMS` 已补 `src/eac.js`，原文 SHA256 为 `359f5729ab22bdf406c6f1c0c4817eb1a1b6f3099c07dcaeb1558503333314b5`；来源交叉核对见该目录 README。历史三文件基线保持原契约，不伪造旧版本 EAC 原文。补丁器 `--verify` 现真正按当前版本干净基线重放并逐字节核验（此前仅 marker 判定）；`--restore` 先整批校验备份等于当前版本基线，拒绝旧版/脏备份，避免 2.5 的历史事故。
