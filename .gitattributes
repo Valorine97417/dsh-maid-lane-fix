@@ -1,0 +1,7 @@
+# 还原基线是逐字节资产，禁止任何行尾/编码转换——
+# 一旦被 core.autocrlf 动过，gunzip 出来的内容就与 SHA256SUMS 对不上，
+# 补丁器会判定「基线已损坏」并拒绝工作。
+
+*.gz binary
+
+baseline/**/SHA256SUMS text eol=lf
