@@ -64,6 +64,17 @@
 - **解法**：一律以 `package.json` 的 `version` 为准，路径只认现行 `_vendor` 落点。
 - **验证**：`grep -m1 '"version"' "$PKG/package.json"`。
 
+### 1.7 用 `node --input-type=module -e` 内联 import 补丁清单，报 `ERR_UNSUPPORTED_ESM_URL_SCHEME … Received protocol 'c:'`
+
+- **症状**：想在命令行里直接取 OFM 的补丁清单做核对，一条 `node -e` 直接抛（原样）：
+  `Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. On Windows, absolute paths must be valid file:// URLs. Received protocol 'c:'`
+  栈顶是 `at throwIfUnsupportedURLScheme (node:internal/modules/esm/load:193:11)`。
+- **原因**：**已定位，不是补丁或插件的问题，是取值姿势的问题**。肇事命令把 Windows 绝对路径直接当 ESM specifier：`node --input-type=module -e '… import { PATCHES } from "C:/…/.dsh/our-free-model/patchkit/patches.mjs" …'`。ESM 的 `import` 只吃 URL，Windows 盘符 `C:` 被当成协议名解析，于是撞出这个错。
+- **解法**：把路径转成 file URL 再动态 import——`const mod = await import(url.pathToFileURL('C:/…/patchkit/patches.mjs').href)`；或 `createRequire(import.meta.url)('C:/…/patches.mjs')`（清单是 ESM 时用前者）。也可以先 `process.chdir()` 到目录再用相对路径 `import('./patchkit/patches.mjs')`。
+- **验证**：本机实测（2026-10-19）——原命令报上面那条 `ERR_UNSUPPORTED_ESM_URL_SCHEME`；改成 `pathToFileURL(...).href` 后输出 `ok PATCHES,PATCH_TARGET,WATCHPOINTS`，不再抛错。**未验证**本仓脚本内部是否也有同样写法（只查了这一条现场命令）。
+- 教训：**报错说「协议不对」时，先看自己把什么塞进了 `import`**——Windows 路径在 node 生态里从来不等于 URL。
+> 证据：会话 `3a746e63` #352（tool/result 报错）+ 同会话 #347（tool/call，`node --input-type=module -e` 原文）；本机 2026-10-19 复现与修复各一次；全库 `ERR_UNSUPPORTED_ESM_URL_SCHEME` 此前零命中（候选 `_r3-session.md` S12）
+
 ## 二、补丁打不上 / 打上无效（上游版本变了怎么办）
 
 ### 2.1 锚点失配，整批中止（最常见的一种）
