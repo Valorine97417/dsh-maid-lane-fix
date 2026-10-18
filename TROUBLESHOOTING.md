@@ -189,6 +189,28 @@
 - **本机落盘**：现役实体目录 `C:/Users/Kayle/.dsh/profiles/desktop/node_modules/dsh-our-free-model`，版本 2.5.3。先备份 `src/eac.js.bak-eac-pre-2026-10-18T08-08-03-872Z`，再由现有 `scripts/patch-ofm.mjs --dir <现役目录>` 应用，仅写 `src/eac.js`（15592 bytes），其余三文件保留；`--verify` 全部 11 处通过。改后 EAC SHA256 `fe8bb92542a7e3efb3fa4768ad159f917a9c3cd583372870eff56e3722a8d4d3`。四份 `.lane-fix-orig/` 备份均与 2.5.3 基线逐字节相等；现役文件及补丁器语法检查通过。
 - **运行状态**：磁盘已应用；未重启宿主、未让现有进程重新加载，故不宣称当前 GUI 会话已使用新逻辑。未提交、未 push；本次未重放真实上游大请求，边界上游证据沿用先前测量。
 
+### 2.11 换号最小间隔补丁变成空操作（锚点被上游饱和重试分支顶掉，2026-10-18）
+
+> 与 4.7 台账的关系：台账第 3 行记的是这条补丁**初次落盘**（`pack.js:35232` 循环内 `await sleepMs(600)`）；本条记的是它**失效后的返工与位置迁移**，两件事，不重复。
+
+- **症状**：补丁报「已应用」、`--verify` 也认，但账号轮换依旧在限流后**数毫秒内**连续换号——原意是「换号之间至少隔 600ms」，实测换号间隔是 0，账号池被打成紧凑循环，同 IP 短时轮换多号（风控关联特征）原样复现。
+- **原因**：补丁插在 `await sleepMs(waitMs)` 处，把等待改写成 `Math.max(waitMs, 600)`。上游 2.4.0 新增了**模型级饱和重试**分支（`isModelSaturationError`，报文 `14003 model busy`），该分支的 `waitMs = buddySaturationDelayMs(attempt) ≈ 2000 * n`，恒 ≥ 2000ms，于是 `Math.max(waitMs, 600)` 永远等于 `waitMs`——补丁退化成空操作：**锚点还在、行也改了、行为没变**。而真正的换号路径在 `BuddyAdapter.stream` 里（`if (this.options.accountPool && isRateLimited(errorText, response.status))`，原 `pack.js:35479-35530`），那条路径上**没有任何延迟**。
+- **解法**：把锚点搬到换号真正发生的位置——`const next = await this.options.accountPool.getAvailableAccount(...)` 成功之后、`response = await this.send(credential, body, options)` 之前插入 600ms 等待，并带 abort 守卫（宿主取消时不吞掉中断）。首个请求在 `pack.js:35357` 之前发出，不经这层延迟。
+- **验证**：`node scripts/patch-pack.mjs --verify` → `4 处已应用 / 0 待应用 / 0 锚点异常`；`node scripts/smoke.mjs` → `18 通过 0 失败`（2026-10-18 实测）。
+- 证据：提交 `2635396`（`docs: 归档 OFM 2.5.3 两个尾项补修与可重放记录 (swap-min-interval & benefit-bare-4004)`，2026-10-18 17:15），正文 `docs/ofm-2.5.3-tail-fixes-20261018/README.md:1-204`。
+- **教训**：「锚点命中 + 行已改」不等于补丁有效。上游只要在锚点附近插一个恒等变换的分支，`Math.max`、`|| 默认值`、`if (!x) x = …` 这类写法就会静默失效——验证必须验**行为**（换号间隔实测 > 0），不能只验 patch 已应用。
+
+### 2.12 无权益账号的裸 `4004` 被当成 `INVALID_REQUEST`，摘戳重试落空（2026-10-18）
+
+> 与 4.7 台账的关系：台账第 5 行记的是补丁**初次落盘**（判定加 `|| data.error_code === "4004"`，`pack.js:33217`）；本条记的是它**为什么必须重打、以及打在哪一层才生效**。
+
+- **症状**：带 `maas_type: "benefit"` 头的请求，上游在 **HTTP 200 的 SSE 首帧**里回业务错误；插件没有走「无权益 → 摘掉 benefit 头重试」的逻辑，而是直接抛 `INVALID_REQUEST`，v4.1-flash 一直失败。
+- **原因**：上游只做**全串等值匹配**——`CODEARTS_BENEFIT_NOT_FOUND_ERROR_CODE = "InferHub.4004.200"`；实测常常只回裸 `data.error_code === "4004"`（华为云 APIG / InferHub 两种口径都出现过）。裸值匹配不上，代码落进 `throw new LlmError2(\`codearts: ${message2}\`, "INVALID_REQUEST", { status: 200 })`，外层 `error.code === BENEFIT_NOT_FOUND_CODE && isBenefitModel && !benefitHeaderDropped` 这个分支**永远不会命中**，摘戳重试自然不触发。补丁要生效必须同时改两处：判定处 + 抛错类型（只加 `||` 判断、仍抛 `INVALID_REQUEST` 的话外层照样不认）。
+- **解法**：`CodeArtsAdapter.consumeSse` 内把判定扩为 `data.error_code === CODEARTS_BENEFIT_NOT_FOUND_ERROR_CODE || data.error_code === "4004" || String(data.error_code) === "4004"`，并统一抛 `BENEFIT_NOT_FOUND_CODE`，让外层重试分支能命中；两个补丁从 `WATCHPOINTS` 升级进 `patchkit/patches.mjs` 的 `PATCHES`（**升格后才会被 `--verify` 与重放核对**，留在 WATCHPOINTS 里等于没人管）。
+- **验证**：`--verify` 报 4 处已应用、`smoke` 18/18 通过；`pack.js` 由 `2765888` 字节变为 `2766877` 字节，打补丁前备份 `pack.js.bak-repatch-20261018-171346211`（2026-10-18 实测）。
+- 证据：提交 `2635396`，正文 `docs/ofm-2.5.3-tail-fixes-20261018/README.md:90-140`。
+- **教训**：上游同时存在「全串错误码」与「裸错误码」两种口径时，只按文档里的全串写判据必然落空；判据写宽之后还要确认**抛出的错误类型**能触发外层分支，否则前面改了也白改。
+
 ## 三、指纹规范化相关的坑
 
 ### 3.1 装了中间层，还是 403 —— 第四道门在传输层
@@ -334,11 +356,24 @@
 - **症状**：五处修复全落盘、重启生效后 codearts 仍全 403；直连矩阵（不经 bili）怎么改都是 429/200，一个 403 都复现不出来。
 - **原因**：403 是 bili 中间层写的；插件的抛错点（pack.js:33064）只抛 `codearts: model request failed with HTTP 403`，**响应体直接丢弃**——不抓 body 永远在猜。
 - **解法**：在 pack.js 非 200 分支埋日志（`appendFileSync` 追加到 `~/.dsh/our-free-model/codearts-diag.log`，记 status + 前 800 字，try/catch 包住），重启后触发一次即抓到真凶。
+- **补记（2026-10-18，三条台账行的失效机理与判据）**：
+  - **WorkBuddy `wb-conversation-headers`**：现象是探测与真实对话**同时**回 `request illegal`，换账号、换模型都不变，极易误判成账号风控。真因是请求缺 `X-Conversation-ID` / `X-Conversation-Message-ID` / `X-Conversation-Request-ID` 三头，上游压根没发。判据是四形态矩阵（换 UA / 换 body / 换账号 / 换模型）里**只有「补上三头」这一个变量能把 403 变 200**——先换变量，别看报错文本。上游 2.5.1 已自行补上三头，本补丁降级为冗余保险。
+  - **CodeArts `codearts-signed-headers` + `codearts-signed-decl`**：两处必须**同时**应用。旧补丁只改 canonical 未改 `SignedHeaders` 声明数组，而上游 `headers.forEach((_, k) => { if (k.toLowerCase() !== "content-type") signedHeaders.push(k); })` 把除 `content-type` 外的所有头签进签名，而 `x-sdk-date` / `x-sdk-content-sha256` 是在签名后才 `set` 的——于是验签必失败。判据：**`401` 变 `429` 就说明验签已过**，429 是限流；别以「最终是否 200」作为补丁生效的唯一判据。
+  - **trae / lobsterai 的「额度用尽」**：`trae: Your requests have exceeded the quota. (code=4008)` 与 `lobsterai: 所有账号均不可用（免费额度已用完，请升级套餐）` 都是**模型级限流**被网关包成了「凭据/额度坏了」的话术。判据：停手等标记过期（2026-10-17 实测 12:36 恢复）。限流与凭据失效要分清：**重登、重试、反复探针这三件事，对限流全是负收益**。
 - **验证**：日志白纸黑字 `bili_resign_unavailable`；passthrough 配置后同请求 200 出词。
 
 **备份台账**（按时间序，都在 `<上游包>/vendor/channel-pack/`）：`bak-ofm-patch-20261016-200606`（2881789B）→ `bak-codearts-sig-20261016-201657`（2882226B）→ `bak-false-risk-20261016-202625`（2882513B）→ `bak-codearts-diag-20261016-204044`（2883203B）→ `bak-benefit4004-20261017-002745`（2883449B）；最终 pack.js 2883612 字节，md5 `801850a2880be6ea3a55fb731510db00`。
 
 **收尾战果**（2026-10-17 全量探测 62 模型）：48 通。codearts 3/4（仅 `glm-5.3-flash` 上游未注册 404；`deepseek-v4-flash`/`deepseek-v4.1-flash`/`glm-5.3` 全 200）、workbuddy 4/4、buddy 4/5、cline 16/24（8 个上游 502/地区封锁）、qoder 1/4（上游 502 pricingUrl）、gemini 0/1（出口地区，换节点即通）、其余渠道全绿——剩余 14 个失败全部非本机代码问题。
+
+### 4.8 只推文档、没推源码：别人照文档跑一遍直接失败（待核）
+
+- **症状**：仓库里文档写好了、也推上去了，另一台机器按文档操作却失败；两侧的提交历史已经**不是祖先关系**（`git log` 各有一串对方没有的提交），`git pull` 既不是 fast-forward 也无法干净 rebase。
+- **原因**：文档描述的行为依赖尚未推送的源码改动，文档先于代码上线；两台机器各自在此基础上继续提交，历史就分叉成了两条线。**根因未证实（待核：分叉发生时两侧各自的确切起点提交，未记进任何提交正文或会话日志）**。
+- **解法**：`git reset --mixed <目标提交>` 把索引与工作区对齐到同一基线（**不要 `--hard`**，工作区里未提交的实测改动要留住）；比对差异时先统一行尾再比，否则整篇全是噪声——`git -c core.autocrlf=false diff --ignore-cr-at-eol`。
+- **验证**：未验：本次只有方法记录，没有「按此法对齐后另一台机器重跑由红转绿」的实测结果。复现判据：`git rev-list --left-right --count HEAD...origin/main` 两侧都 > 0。
+- 证据：记忆 `0mvdldirc-abe17fdfb1ae450e8905afe56b`（2026-10-18 复核，无对应提交号）。
+- **教训**：文档是交付物的一部分，它描述的改动必须与源码同一次推送；「先写文档占位」在多机协作里会直接制造分叉。
 
 ## 五、关键路径与配置落点
 
