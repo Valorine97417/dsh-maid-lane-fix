@@ -343,17 +343,33 @@ for (let depth = 0; depth < 3 && node?.cause !== undefined; depth += 1) {
 
 ---
 
-### 7.4 待查：渠道把 `system` 转成 `developer` 导致带 system 的请求失败
+### 7.4 已撤回：「带 system 九渠道全挂」是 7.1 的连带现象，不是独立 bug
 
-**现象**：凡 `messages` 里带 `{role:'system'}` 的请求，8326 上横跨 9 个渠道
-（buddy / codearts / trae / loomy / raccoon / zcode / minimax / qodercn / cline）一律失败；
-不带 system 一律 200。
+> **本节已于 2026-10-19 撤回。** 保留在此是为了记录一次**差点写进事故单的假待查项**——
+> 它曾被列为「比 7.1 更严重」，实际是 7.1 未修时的连带现象。
 
-**与 7.1 的区别（不要混）**：7.1 是**本机** `convertMessage()` 漏判角色，已修；
-这一条是**渠道适配器把 `system` 改写成 `developer` 再发给上游、上游不认**，
-报错形态是 `502` 裹着一个带 `param:null` 的上游 400。**本轮未定性、未取证行号**。
+**当时的观察**：8326 上凡 `messages` 带 `{role:'system'}` 的请求，9 个渠道
+（buddy / codearts / trae / loomy / raccoon / zcode / minimax / qodercn / cline）一律失败，
+报错是 `502` 裹着一个带 `param:null` 的上游 400 `unsupported message role: developer`，
+不带 system 一律 200。据此推断「渠道适配器把 `system` 转成 `developer` 再发上游」，列为待查。
 
-**为什么它比 7.1 更要紧**：宿主正常对话**一定带 system**，等于大部分渠道目前实际不可用。
+**修完 7.1 之后的复测（两个入口各 6 个模型）**：
 
-**状态**：待查。定位方向是渠道适配器的 system 收集/序列化逻辑（`collectHarnessSystem`、
-`normalizeHarnessMessages` 一带），**注意这条与 7.1 修的不是同一处**。
+| 入口 | 模型 | 仅 user | 带 system |
+| --- | --- | --- | --- |
+| 18900 独立版 | qodercn/dfmodel、qodercn/qfmodel、raccoon/sn-deepseek-v4-1-flash、zcode/GLM-5.3-Flash、cline/cline-free/mimo-v2.6-flash、buddy/hy3 | 全 200 | **全 200** |
+| 8326 插件网关 | ofm/qodercn/dfmodel、ofm/zcode/GLM-5.3-Flash、ofm/buddy/hy3 | 全 200 | **全 200** |
+
+**结论**：现象**不复现**。
+
+**为什么会被误当成独立问题**：那个 `502` 裹着的 400 里写着 `role: developer`，而我发的是
+`system`。当时把「角色名对不上」理解成「有个渠道侧的改写环节」，于是把它当成 7.1 之外的
+另一个 bug。实际上 7.1 修好之后，**本机不再把 `system` 判成非法、也不再有那条把 system
+交给上游的路径**，连带现象就一起消失了。
+
+**留下的教训（已并入 7.3）**：
+
+1. **同一现象修 A 之后要复测，别急着立成新待办**。这一条是 7.1 的连带效应，
+   如果当时并列成「更严重的待查」，就会白白多查一轮。
+2. **「报错里的角色名与我的输入不一致」有多种可能**，把它当成「有别的环节在改写」是
+   一次过度推断——也可能是本机上一处未修的 bug 在同一路径上留下的痕迹。
