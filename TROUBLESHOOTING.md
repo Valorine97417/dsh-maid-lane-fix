@@ -3,7 +3,7 @@
 > 用途：**新设备安装 / 重装 / 上游升级后**的排查手册。分三趟活：装插件（中间层）、跑补丁器（改上游字节）、验完了确认真的生效。
 > 每条按「症状 → 原因 → 解法 → 验证」写；症状照抄实际报错或现象，命令都是可复制的具体值。
 > 只写有据可查的；没素材的地方写「暂未遇到」，不确定的标「（待核）」。
-> 最后更新 2026-10-19（本机实测口径：`dsh-our-free-model` 2.5.3 + lane-fix 0.3.3）。
+> 最后更新 2026-10-19（本机实测口径：`dsh-our-free-model` 2.5.3 + lane-fix 0.3.3；**2026-10-19 补 2.14 profile 层 patch 缩进事故**）。
 >
 > 三条先记住：**① 补丁器是显式 CLI，装插件不会自动跑；② 插件与补丁改完都得重启 DSH；③ 上游一升级，补丁就得重打，锚点失配宁可报错也不猜。**
 
@@ -256,6 +256,41 @@
 - **注**：`.lane-fix-orig/` 里那 4 份 `.patched-*` **内容就是干净原文**（哈希已验），要还原可直接改名去掉后缀，或用 `baseline/ofm-2.5.3/` 解压覆盖（见 2.5）。
 - **教训**：备份名撒谎不等于备份坏——**先比哈希再判死刑**。另外「`files` 白名单漏目录」这类缺陷只在**安装版**暴露，工作树里一切正常，所以本仓自测必须**从安装目录跑一遍**，不能只测工作树。
 
+### 2.14 profile 层 `cordis.patch.yml` 缩进写错 → 整份 profile 配置解析失败，**所有**面板保存全挂（2026-10-19）
+
+- **症状**：面板上点保存，底部红字报
+  `dsh: failed to parse patches $DSH_HOME/profiles/desktop/cordis.patch.yml:` + `YAMLException: bad indentation of a sequence entry (326:3)`（同一个坏文件还有 `(327:5)` 这一版）。现象**看起来像某个插件的保存按钮坏了**（本次报的是 ofm 面板「api 保存不了」），实际爆炸半径是**该 profile 里所有 namespace 的设置都存不了**——profile 的 patch 层在配置加载阶段就解析失败，根本到不了保存逻辑。
+- **原因**：profile 层与 bundle 层是**两套不同的 patch 语法**，混用即坏。profile 层顶层必须是 **0 缩进的扁平数组**：`- id:` 顶格、`name:` / `config:` 缩 2、子键缩 4；而包内 bundle patch 走 `- insert:` 原语、子行缩 4 格（对照 `node_modules/dsh-cost-meter/cordis.patch.yml` 271 字节、`node_modules/@sugarforever/dsh-zvec-grep/cordis.patch.yml` 298 字节）。本次是照 bundle 的写法把三行以 **2 格缩进**追加进 profile patch：
+
+  ```yaml
+    # --- 新增扩展插件 ---
+    - id: cost-meter
+      name: 'dsh-cost-meter'
+      config:
+        enabled: true
+
+    - id: zvec-grep
+      name: '@sugarforever/dsh-zvec-grep'
+      config:
+        enabled: true
+  ```
+
+  解析器把这三行当成上一项 `- id: xiaomi-mimo-tts` 的 `config:` 块内内容（报错点 `326:3` 正落在 `  - id: cost-meter` 上），于是整份文件 `bad indentation of a sequence entry`。
+  **写入方（待核）**：那两行中文注释 `# --- 新增扩展插件 ---` / `# --- 新增增强插件配置 ---` 在 `app.asar`、`$DSH_HOME`、`D:\DeepSeek Harness` 全盘（含 storages 与会话解压内容）**零命中**，不是任何已装插件或内置代码生成的，怀疑人工或外部脚本手写。**官方写入方可排除**：asar 内 `@deepseek-ai/dsh-config-editor` 的 `ConfigEditor.edit(entry, change)` 用 `yaml.parseDocument` + `document.setIn([index,'config'])` / `document.add(document.createNode(...))`，缩进由解析器生成、写入前 `isDeepStrictEqual` 全等比对、失败即回滚——**不可能**产出坏缩进，别去查面板保存路径的 bug。
+- **解法**（三步，第三步才是干净的收尾）：
+  1. 备份：`cp cordis.patch.yml cordis.patch.yml.bak-<用途>-<时间戳>`。
+  2. 修缩进：**整块**去 2 格，中文注释行与所有子键跟着一起归一。只改顶层 `- id:` 那行会立刻换一种错——本机实测先改 333/338 两行后报 `ScannerError: mapping values are not allowed here`（`334:9`），改到 332–341 整块才过。
+  3. **删整块**（本次采用，推荐）：那两条本就是**冗余覆盖**——`dsh-cost-meter` 1.9.11 与 `@sugarforever/dsh-zvec-grep` 0.1.2 都在 profile `package.json` 的 `dsh.profile.bundles` 清单里，且各自 `dsh.bundle.patch = "./cordis.patch.yml"`，随 bundle 层自动挂载，profile 层再写一遍没有意义。删前 10906 B / 339 行，删后 **10723 B / 328 行**，顶层项 14 → 12。
+  **为什么删比修好**：`applyEntryPatches` 对配置执行 `target[key] = value`——**整体替换，不是逐字段合并**。冗余条目里随手写的 `config: {enabled: true}` 会把包内声明的整份默认 config 清掉；删掉它，合成产物里 zvec-grep 段才恢复成包内声明的 7 项默认值（`embedding: local/potion-code-16m-v2`、`device: auto`、`defaultLimit: 10`、`maxLimit: 30`、`watchDebounceMs: 750`、`reconcileIntervalMs: 3600000`、`statusPollIntervalMs: 2000`）。顺带把混进来的行尾碎片一并归一（`replace(/\r\n/g,'\n')` + 收敛末尾换行）。
+- **验证**：
+  1. **解析层（决定性）**：用同方言的 YAML 解析器复验——`python -c "import yaml;d=yaml.safe_load(open('$DSH_HOME/profiles/desktop/cordis.patch.yml',encoding='utf-8'));print(len(d),[e.get('id') for e in d])"` → 修复后输出 `12` 与 12 个 id；另确认没有残留的 2 格顶层项：`grep -c '^  - id:'` = 0。（本机可用的解释器：`~/.dsh/profiles/desktop/node_modules/dsh-video-understand/.venv/Scripts/python.exe`，自带 pyyaml。）
+  2. **合成层（不必重启）**：宿主用 chokidar 持续监听 profile 的 `cordis.patch.yml`，改完约 3 秒 `cordis.yml` 就被重新合成——本机 15:43:30 落盘、15:43:33 `cordis.yml` 重写为 68780 B（同日 15:25:45 那轮亦吻合）。
+  3. **面板层**：本次修完**未再点一次保存（未验）**；但同一文件已被面板写过两次——`agent-default-model` 的 `model` 从 `gemini/gemini-3.8-flash` → `lobsterai/deepseek-flash` → `raccoon/sn-deepseek-v4-1-flash`，写入链路可证。
+- **注**：OFM 面板的绝大多数设置**不进** `cordis.patch.yml`，它们落在 `$DSH_HOME/our-free-model/settings.json`（OFM `src/store.js` 的 `JsonStore`，写盘走临时文件 + rename，不留半截文件）；只有「默认模型」这类写 profile patch 的 `agent-default-model` 才会因 patch 文件坏而存不了。看到「面板存不了」，先把这两条落盘路径分开看。
+- **教训**：① 症状像某个插件坏了，先怀疑**共享的配置层**——它一坏，全体保存全挂；② 往 profile 层追加条目**别照抄包内 bundle 的 `- insert:` 写法**，两套语法不通用；③ 冗余覆盖能删就删，少一个复发点，也免了整体替换清空包内默认值。
+- 证据强度：A（报错原文、修复前后字节/行数/顶层项数、合成产物 mtime 与字节、包内两处 patch 原文均已上机核验）。
+- 证据：记忆 `0mvexwp5k-ed429c9a60af4764a7b9ad71d8`（事故与修法）、`0mveygjy8-7a0dd66bc94b461698a13b2a85`（冗余判定与删后复验）、`0mvdl20cw-80f27dc9c75b4b0e831d7fed48`（两层语法对照）。
+
 ## 三、指纹规范化相关的坑
 
 ### 3.1 装了中间层，还是 403 —— 第四道门在传输层
@@ -465,6 +500,8 @@
 | 补丁落点（3 文件） | `<包目录>/client.js`、`<包目录>/index.js`、`<包目录>/src/http.js` |
 | 可用度数据源 | `$DSH_HOME/our-free-model/availability.json` |
 | profile 目录 | `~/.dsh/profiles/{desktop,dev,web}` |
+| profile patch（源层） | `~/.dsh/profiles/desktop/cordis.patch.yml`（**顶层必须是 0 缩进的扁平数组**，别混 bundle 层的 `- insert:` 语法，见 2.14） |
+| profile 合成产物 | `~/.dsh/profiles/desktop/cordis.yml`（宿主监听 patch 文件，变更后约 3 秒自动重合成，**不必重启**） |
 
 `baseline/` 与 `docs/` **故意不在 `package.json` 的 `files` 白名单**：`git clone` 看得到、`pnpm add` 装不到——它们随插件仓库走版本控制，是档案不是运行时要用的东西。
 
@@ -510,6 +547,7 @@
 8. **锚点失配疑似「行尾」问题**：本机有过 CRLF 行尾让替换工具命中 0 次的记录（全局教训，非本仓专属）——先确认目标文件行尾，必要时用 Node 脚本做精确匹配，别用会规整行尾的编辑器盲改。
 9. **别对着已应用的文本做破坏性用例**：锚点其实还在，用例会假绿（冒烟里专门加了自检断言）。破坏必须落在未打补丁的原文上。
 
+10. **改 profile 的 `cordis.patch.yml` 后先验解析，再看面板**：宿主用 chokidar 监听它，改完约 3 秒 `cordis.yml` 就会重新合成（**不必重启**）；但必须先用 YAML 解析器过一遍——**缩进写错不是「丢一行」，而是整份 profile 配置解析失败、所有面板保存全挂**（见 2.14）。同理，往 profile patch 追加条目**别照抄包内 bundle 的 `- insert:` 写法**，两层语法不通用。
 ## 七、暂未遇到（留给以后填）
 
 - 补丁集跨大版本（v2.4.0+）的迁移实录：暂未遇到（上游尚未发新版）。
