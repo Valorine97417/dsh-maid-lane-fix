@@ -151,7 +151,7 @@ node scripts/patch-ofm.mjs --verify     # 逐字节核对，改完必跑
 - **根因证据**：既有上游单变量测量显示 8388608 bytes 通过体积关、8388609 bytes 413，即 8 MiB 请求体限制。体积关放行不代表上游模型成功；本次只做离线验证，不再次发送大请求。
 - **修复落点**：`lib/ofm-patch.js` 的三处 EAC 补丁（补丁集 v3，合计 11 处）。以 `Buffer.byteLength(JSON.stringify(body), 'utf8')` 的最终字节数为准，仅超上限才在签名/出网前拒绝。网关仍回 413 时用中文解释实测上限、附件/会话缩减建议；两条路径均归 `CODE.client`，原样重试无效，不宣称解除上游限额。
 - **验证与还原**：既有冒烟 140 PASS（现役分支 141 PASS）；新增 `scripts/eac-body-limit-test.mjs` 32 PASS，另用 `EAC_USE_INSTALLED=1` 读取现役源码复测 32 PASS。覆盖 ASCII/中文 UTF-8 的上限前一字节、精确上限、上限加一字节；超限零 transport、签名/正常 SSE 与 JSON 不回归、上游 413 不可重试、CLI 幂等及还原保护。`baseline/ofm-2.5.3/` 补齐 EAC 原文和清单；`--verify` 已升级为基线重放逐字节比对，`--restore` 拒绝不属于当前版本的备份。
-- **落盘与生效**：现役实体目录 `C:/Users/Kayle/.dsh/profiles/desktop/node_modules/dsh-our-free-model` 仍为 2.5.3。已备份并仅通过现有补丁器写入 `src/eac.js`；11 处逐字节验证及语法检查通过。四份常规备份均与当前版本基线相等。**仅磁盘生效，未重启或重新加载宿主进程**；未提交、未 push。完整哈希、备份路径、命令记录见 `TROUBLESHOOTING.md` 2.10。
+- **落盘与生效**：现役实体目录 `~/.dsh/profiles/desktop/node_modules/dsh-our-free-model` 仍为 2.5.3。已备份并仅通过现有补丁器写入 `src/eac.js`；11 处逐字节验证及语法检查通过。四份常规备份均与当前版本基线相等。**仅磁盘生效，未重启或重新加载宿主进程**；未提交、未 push。完整哈希、备份路径、命令记录见 `TROUBLESHOOTING.md` 2.10。
 
 ---
 

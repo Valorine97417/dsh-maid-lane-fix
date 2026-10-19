@@ -207,7 +207,7 @@
 - **报错**：本地超限与上游 413 均为简体中文说明，包含 8 MiB / 8388608 bytes 及缩短会话、移除附件或图片、新会话建议；使用 `new UpstreamError(message, CODE.client, details)`。真实 adapter 可重试集合仅含 `EMPTY_RESPONSE / SERVER / TIMEOUT / TRANSPORT`，因此 `CLIENT_ERROR` 不可重试；上游 413 不透传响应原文或 Retry-After。
 - **基线与还原**：`baseline/ofm-2.5.3/SHA256SUMS` 已补 `src/eac.js`，原文 SHA256 为 `359f5729ab22bdf406c6f1c0c4817eb1a1b6f3099c07dcaeb1558503333314b5`；来源交叉核对见该目录 README。历史三文件基线保持原契约，不伪造旧版本 EAC 原文。补丁器 `--verify` 现真正按当前版本干净基线重放并逐字节核验（此前仅 marker 判定）；`--restore` 先整批校验备份等于当前版本基线，拒绝旧版/脏备份，避免 2.5 的历史事故。
 - **验证**：`node scripts/smoke.mjs` → 140 PASS；设置 `OFM_DIR` 为现役安装后 → 141 PASS。`node scripts/eac-body-limit-test.mjs` → 32 PASS；`EAC_USE_INSTALLED=1 node scripts/eac-body-limit-test.mjs` → 同为 32 PASS，读取现役文件进行行为验证。覆盖 ASCII/中文的 8388607、8388608、8388609 bytes、签名字节不变、超限零 transport、正常 SSE/JSON、413 的纯文本/JSON/HTML 响应、500 分类、CLI 幂等、干净还原及错备份整批拒绝；全套真实出网次数为零。
-- **本机落盘**：现役实体目录 `C:/Users/Kayle/.dsh/profiles/desktop/node_modules/dsh-our-free-model`，版本 2.5.3。先备份 `src/eac.js.bak-eac-pre-2026-10-18T08-08-03-872Z`，再由现有 `scripts/patch-ofm.mjs --dir <现役目录>` 应用，仅写 `src/eac.js`（15592 bytes），其余三文件保留；`--verify` 全部 11 处通过。改后 EAC SHA256 `fe8bb92542a7e3efb3fa4768ad159f917a9c3cd583372870eff56e3722a8d4d3`。四份 `.lane-fix-orig/` 备份均与 2.5.3 基线逐字节相等；现役文件及补丁器语法检查通过。
+- **本机落盘**：现役实体目录 `~/.dsh/profiles/desktop/node_modules/dsh-our-free-model`，版本 2.5.3。先备份 `src/eac.js.bak-eac-pre-2026-10-18T08-08-03-872Z`，再由现有 `scripts/patch-ofm.mjs --dir <现役目录>` 应用，仅写 `src/eac.js`（15592 bytes），其余三文件保留；`--verify` 全部 11 处通过。改后 EAC SHA256 `fe8bb92542a7e3efb3fa4768ad159f917a9c3cd583372870eff56e3722a8d4d3`。四份 `.lane-fix-orig/` 备份均与 2.5.3 基线逐字节相等；现役文件及补丁器语法检查通过。
 - **运行状态**：磁盘已应用；未重启宿主、未让现有进程重新加载，故不宣称当前 GUI 会话已使用新逻辑。未提交、未 push；本次未重放真实上游大请求，边界上游证据沿用先前测量。
 
 ### 2.11 换号最小间隔补丁变成空操作（锚点被上游饱和重试分支顶掉，2026-10-18）
@@ -411,7 +411,7 @@
 | 4 | content-type 退出签名 | pack.js:31028 | codearts 全模型 403/401 `APIG.0301 verify ak sk signature fail`（直连矩阵单变量实证：content-type 不参与签名即变 429） | 签名前不再 set content-type，挪到 Authorization 之后挂回（发送侧行为不变） |
 | 5 | benefit 裸 "4004" 判定 | pack.js:33217 | v4.1-flash 摘戳重试永不触发：插件自带「benefit not found → 去掉 `maas_type` 戳重发」（pack.js:32992），但触发判定只认全串 `InferHub.4004.200`，上游实测只回裸 `"4004"` | 判定加 `|| data.error_code === "4004"`（`src/llm-adapter.ts:1658` 同步） |
 
-**配置类（非补丁）——403 真凶**：codearts 的 403 不是华为云回的，是本机 bili 压缩代理拒转签名请求，响应体 `signed_request_requires_resign / bili_resign_unavailable`——SDK-HMAC-SHA256 签名覆盖请求体，bili 一旦压缩改写内容签名即失效（上游必 401），于是直接 403。修法在 `C:\Users\Kayle\.config\billion-context\billion-context.json` 加 `"resign":{"sdk-hmac-sha256":{"passthrough":true}}`（签名链直通不压缩）。复验：经网关 8326 发 `codearts/deepseek-v4-flash` HTTP 200 真出词（2026-10-17 00:25，`"收到"`）。
+**配置类（非补丁）——403 真凶**：codearts 的 403 不是华为云回的，是本机 bili 压缩代理拒转签名请求，响应体 `signed_request_requires_resign / bili_resign_unavailable`——SDK-HMAC-SHA256 签名覆盖请求体，bili 一旦压缩改写内容签名即失效（上游必 401），于是直接 403。修法在 `%USERPROFILE%/.config\billion-context\billion-context.json` 加 `"resign":{"sdk-hmac-sha256":{"passthrough":true}}`（签名链直通不压缩）。复验：经网关 8326 发 `codearts/deepseek-v4-flash` HTTP 200 真出词（2026-10-17 00:25，`"收到"`）。
 
 - **症状**：五处修复全落盘、重启生效后 codearts 仍全 403；直连矩阵（不经 bili）怎么改都是 429/200，一个 403 都复现不出来。
 - **原因**：403 是 bili 中间层写的；插件的抛错点（pack.js:33064）只抛 `codearts: model request failed with HTTP 403`，**响应体直接丢弃**——不抓 body 永远在猜。

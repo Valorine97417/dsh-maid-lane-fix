@@ -126,17 +126,17 @@
 ## 三、文件落盘与核验台账
 
 ### 1. 修改文件
-- **补丁集正本**：`C:/Users/Kayle/.dsh/our-free-model/patchkit/patches.mjs`
+- **补丁集正本**：`~/.dsh/our-free-model/patchkit/patches.mjs`
   - 将 `swap-min-interval` 和 `benefit-bare-4004` 移出 `WATCHPOINTS` 并升级至 `PATCHES`（共 4 处补丁）；
   - 保留 `false-risk-11128` 和 `wb-conversation-headers` 于 `WATCHPOINTS`。
-- **运行目标包**：`C:/Users/Kayle/.dsh/profiles/desktop/node_modules/dsh-our-free-model/vendor/channel-pack/pack.js`
+- **运行目标包**：`~/.dsh/profiles/desktop/node_modules/dsh-our-free-model/vendor/channel-pack/pack.js`
   - 原文件已安全备份为：`pack.js.bak-repatch-20261018-171346211`；
   - 字节变动：`2765888` → `2766877` 字节。
 
 ### 2. 补丁应用状态核验
 运行 `node scripts/patch-pack.mjs --verify` 输出：
 ```
-4 处补丁 → C:\Users\Kayle\.dsh\profiles\desktop\node_modules\dsh-our-free-model\vendor\channel-pack\pack.js
+4 处补丁 → ~/.dsh/profiles\desktop\node_modules\dsh-our-free-model\vendor\channel-pack\pack.js
 
   ✓ 已应用  codearts-signed-headers   （content-type 不参与签名）
   ✓ 已应用  codearts-signed-decl      （声明数组与 canonical 必须同剔）
@@ -189,16 +189,16 @@
 
 ```bash
 # 1. 体检（确保锚点存活）
-node C:/Users/Kayle/.dsh/our-free-model/patchkit/scripts/patch-pack.mjs --dry-run
+node ~/.dsh/our-free-model/patchkit/scripts/patch-pack.mjs --dry-run
 
 # 2. 自动落盘
-node C:/Users/Kayle/.dsh/our-free-model/patchkit/scripts/patch-pack.mjs
+node ~/.dsh/our-free-model/patchkit/scripts/patch-pack.mjs
 
 # 3. 严格核验
-node C:/Users/Kayle/.dsh/our-free-model/patchkit/scripts/patch-pack.mjs --verify
+node ~/.dsh/our-free-model/patchkit/scripts/patch-pack.mjs --verify
 
 # 4. 冒烟测试
-node C:/Users/Kayle/.dsh/our-free-model/patchkit/scripts/smoke.mjs
+node ~/.dsh/our-free-model/patchkit/scripts/smoke.mjs
 
 # 5. 重启 DSH 桌面端以加载新 channel-pack 运行时
 ```
