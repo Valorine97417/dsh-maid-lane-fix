@@ -291,6 +291,26 @@
 - 证据强度：A（报错原文、修复前后字节/行数/顶层项数、合成产物 mtime 与字节、包内两处 patch 原文均已上机核验）。
 - 证据：记忆 `0mvexwp5k-ed429c9a60af4764a7b9ad71d8`（事故与修法）、`0mveygjy8-7a0dd66bc94b461698a13b2a85`（冗余判定与删后复验）、`0mvdl20cw-80f27dc9c75b4b0e831d7fed48`（两层语法对照）。
 
+### 2.15 OFM Chat wire 遗漏 developer 角色报 400（2026-10-19）
+
+- **症状**：请求 OFM 渠道时服务端抛错并中断会话：
+  ```
+  HTTP 400 Unsupported message role: developer
+  code: INVALID_REQUEST
+  ```
+- **原因**：上游 `vendor/channel-pack/pack.js`（及独立版 `packages/standalone/channels/business.mjs`）的 Chat wire `convertMessage()` 仅处理了 `system`、`user`、`assistant`、`tool` 四种角色。而 `developer` 是 DSH 宿主的标准合法会话角色（宿主内置 `createDeveloperMessage`），同文件 Responses wire 与 `src/messages.js` 均已支持该角色，Chat wire 是唯一遗漏分支。
+- **解法**：在 `pack.js:63314` 及 `business.mjs:63303` 将判断条件由 `if (role === "system")` 修改为 `if (role === "system" || role === "developer")`，使 developer 角色与 system 角色共享相同转换逻辑。
+- **验证**：重启服务后向独立版 18900 端口发送 `{role: 'developer'}` 测试消息，返回 HTTP 200 且模型正确遵循开发者指令作答；对照组发送非法角色 `{role: 'banana'}` 仍按预期返回 HTTP 400。
+- 来源：提交 `0c4a3a7`；记忆库 lesson `0mverqec6`；`docs/ofm-lane-fingerprint-incidents.md` 第七章。
+
+### 2.16 OFM 2.5.5 与 2.5.7 版本错位：installedVersion 虚报 2.5.7 实际跑 2.5.5（2026-10-20）
+
+- **症状**：插件设置面板与状态文件均显示当前已安装版本为 `2.5.7` 且不再提示升级，但运行表现与旧版相同。
+- **原因**：三处证据交叉核对表明真实运行的是 2.5.5 版本：`settings.json` 的 `installedVersion` 虽记为 2.5.7，`upgrade-state.json` 虽记为 `2.5.5 → 2.5.7, activated: true`，但安装目录 `package.json` 的 `version` 仍为 `2.5.5`，核心产物 `pack.js` 为 2913003 字节（真实 2.5.7 应为 2926187 字节）。原因在于升级流程只更新了自报元数据，未真正执行物理文件的覆写替换。
+- **解法**：不要盲目相信 JSON 状态记录。稳妥方案为将 `settings.json` 与 `upgrade-state.json` 中的版本元数据重置回真实值 `2.5.5`，使升级提示重新激活；或从 feed 重新下载对应版本的 tarball 完整执行物理覆盖安装。
+- **验证**：核对 `pack.js` 实际字节数（2913003 字节对应 2.5.5）及版本特征串；重置元数据后面板恢复升级提示并能重新触发安装。
+- 来源：2026-10-20 实测证据核对；`docs/incidents-2026-10-20.md` 附录 B.1。
+
 ## 三、指纹规范化相关的坑
 
 ### 3.1 装了中间层，还是 403 —— 第四道门在传输层
@@ -371,6 +391,19 @@
   3. **凭据用一眼可辨的假值**：`signingSecret: 'offline-test-not-a-credential'`（示例假值、非真实密钥）。
 - **验证**：测试跑完，`sends` 计数等于预期发送次数（全部来自注入的 seam），真实 `http/https/fetch` 一次都没被调用；断网环境（或临时把 `offline.invalid` 写进 hosts）下测试结果不变。本机落点：`scripts/eac-body-limit-test.mjs`——`base: 'https://offline.invalid/eac/v1'`、`signingSecret: 'offline-test-not-a-credential'`（示例假值、非真实密钥）、`http.request = https.request = globalThis.fetch = forbidden`、`lane.fetch = async (url, request) => …` 注入。
 - **教训（真正会咬人的那一下）**：推代码前跑敏感词扫描，`offline-test-not-a-credential` 这类串**必然命中**。**别一命中就当泄露回滚**——先看它自不自证：域名是不是 `.invalid`、值里是不是明写 `not-a-credential` / `test` / `fake`。反过来也成立：写假凭据时**主动**让值自带这种自证标记，省下将来每一个人的一次惊慌。
+
+### 3.11 buddy 全家报 unapproved channel：真凶在 system prompt 首句内容指纹（2026-10-20）
+
+- **症状**：模型切换到 `buddy/deepseek-v4.1-flash` 后每一轮运行均失败，切模型或切推理档位表现一致：
+  ```
+  本轮运行失败  buddy: 请求被拦截，请重新发送 Illegal API invocation from an unapproved channel
+  code: INVALID_REQUEST  status: 400
+  ```
+  插件错误透传中对应错误码为 `code=11128`。
+- **原因**：并非白名单、账号过期、UA 风控或代理劫持（单变量实测均已排除）。真因在于腾讯网关（`copilot.tencent.com/v2/chat/completions`）对 `role=system` 消息首句进行第三方客户端内容指纹检测，DSH 内置开场白 `You are an AI agent powered by DeepSeek Harness.` 恰好命中拦截规则。判定条件：`AI agent` + `powered by` + `DeepSeek Harness` 三组词同时存在且顺序固定即拦截，大小写不敏感。此外发现 `code 11128` 为内容指纹、角色非法、缺会话头及首条非 system 四种情况共用的通用拦截码。
+- **解法**：利用 `@deepseek-ai/dsh-system-prompt` 自带的官方开关，在 profile 层的 `cordis.patch.yml` 中为 `system-prompt` 增加配置 `includeHarnessIdentity: false`。重要注意：profile patch 为整块替换 `config` 而非深度合并，必须将原 `cordis.yml` 中的完整女仆人设（`personaPrefix`）原样重述，否则人设配置会被清空。
+- **验证**：单变量改前测试含该句报 400，删除该句报 200；落地配置后检查 YAML 语法无误，重启 DSH 确认端口切换且会话日志中首句身份声明已消除，发送 20091 字真实长 prompt 打腾讯网关返回 HTTP 200 正常持续发流。
+- 来源：2026-10-20 单变量实测；`docs/incidents-2026-10-20.md` 第八章。
 
 ## 四、与 dsh-our-free-model 的版本联动
 
