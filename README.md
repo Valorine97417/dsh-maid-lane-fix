@@ -88,6 +88,11 @@ node scripts/patch-ofm.mjs --dry-run         # 应报「7 处待应用」= 干�
 
 WorkBuddy `request illegal`、CodeArts `401→429`、trae/lobsterai 502 限流伪装——症状、根因、修法与验证判据都归档在 [`docs/ofm-lane-fingerprint-incidents.md`](docs/ofm-lane-fingerprint-incidents.md)。**上游升级后先看那份**再决定打哪几处补丁：2.5.1 已自行补上会话三头（我方那处降级为冗余），但 CodeArts 签名两处仍必需。
 
+### 宿主与插件运行时事故的当日记录
+
+上游拒签之外，还有一类事故来自**宿主自身配置、内容指纹与插件运行时**的交界，归档在 [`docs/incidents-2026-10-20.md`](docs/incidents-2026-10-20.md)。其中第 8 条（buddy 全线 `unapproved channel`）最值得先看：**报错文案说「渠道未审批」，真因却是 system prompt 首句的内容指纹**——四个由文案推导出的假说全部被单变量实测推翻。另附 `code 11128` 一个码四种含义的对照表，以及「配置已改 ≠ 已生效」「zstd 多帧静默截断」「jsdom 量不出布局」等可复用纪律。
+
+
 ## 三、为什么是「中间层」而不是改上游
 
 这是 `dsh-maid-scenery` 那套**融合层**思路在网络层的同一种做法——隔离在自家包里，与上游配合，不接管它的实现：
