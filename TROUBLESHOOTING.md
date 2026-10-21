@@ -310,6 +310,7 @@
 - **解法**：不要盲目相信 JSON 状态记录。稳妥方案为将 `settings.json` 与 `upgrade-state.json` 中的版本元数据重置回真实值 `2.5.5`，使升级提示重新激活；或从 feed 重新下载对应版本的 tarball 完整执行物理覆盖安装。
 - **验证**：核对 `pack.js` 实际字节数（2913003 字节对应 2.5.5）及版本特征串；重置元数据后面板恢复升级提示并能重新触发安装。
 - 来源：2026-10-20 实测证据核对；`docs/incidents-2026-10-20.md` 附录 B.1。
+
 ### 2.17 OFM 自动升到 2.5.7 → 补丁集 v3 三处锚点失配整批中止；其中三处补丁应「作废」而非「重锚」（2026-10-21）
 
 - **症状**：面板「测一次」连报 `Rate limit exceeded. Please try again later.` 与 `no eligible anonymous exit; retry after cooldown`；跑 `patch-ofm.mjs --verify` 报 `补丁锚点失配，整批中止`，点名 index.js 三处：`bench-records-a-verdict` / `bench-ttft-from-measured` / `verdict-outlives-the-round`。现役 `package.json` 已是 **2.5.7**（补丁集绑定 2.5.3 基线）。
@@ -319,7 +320,6 @@
 - **教训**：① 锚点失配先 diff 上游新版**有没有把补丁意图原生化**——原生化了就作废，硬重锚是往重构后的代码里塞死代码；② 面板报错文案先 grep 安装包，查无此文案 = 上游透传，按 4.5 分流，不动客户端；③ 上游 auto-update 已在 2.5.8 候着，重启 DSH 前后各跑一次 `--verify`，届时按本节流程再导 ofm-2.5.8 基线。
 - 证据强度：A（--verify/smoke/eac-body-limit-test 输出、三路交叉取证哈希、availability.json 台账原文均已上机核验）。
 - 证据：记忆 `0mvhqx7h`（两条透传文案判据）、`0mvdhzzru`（2.5.7 现况）。
-
 ## 三、指纹规范化相关的坑
 
 ### 3.1 装了中间层，还是 403 —— 第四道门在传输层
@@ -412,7 +412,17 @@
 - **原因**：并非白名单、账号过期、UA 风控或代理劫持（单变量实测均已排除）。真因在于腾讯网关（`copilot.tencent.com/v2/chat/completions`）对 `role=system` 消息首句进行第三方客户端内容指纹检测，DSH 内置开场白 `You are an AI agent powered by DeepSeek Harness.` 恰好命中拦截规则。判定条件：`AI agent` + `powered by` + `DeepSeek Harness` 三组词同时存在且顺序固定即拦截，大小写不敏感。此外发现 `code 11128` 为内容指纹、角色非法、缺会话头及首条非 system 四种情况共用的通用拦截码。
 - **解法**：利用 `@deepseek-ai/dsh-system-prompt` 自带的官方开关，在 profile 层的 `cordis.patch.yml` 中为 `system-prompt` 增加配置 `includeHarnessIdentity: false`。重要注意：profile patch 为整块替换 `config` 而非深度合并，必须将原 `cordis.yml` 中的完整女仆人设（`personaPrefix`）原样重述，否则人设配置会被清空。
 - **验证**：单变量改前测试含该句报 400，删除该句报 200；落地配置后检查 YAML 语法无误，重启 DSH 确认端口切换且会话日志中首句身份声明已消除，发送 20091 字真实长 prompt 打腾讯网关返回 HTTP 200 正常持续发流。
+- ⚠️ **本节结论不完整**：2026-10-21 发现关掉首句后仍 400，还有第二处指纹 —— 见 3.12。
 - 来源：2026-10-20 单变量实测；`docs/incidents-2026-10-20.md` 第八章。
+
+### 3.12 buddy 仍报 11128（3.11 之后）：第二处指纹是 `app:web-surface` 段（2026-10-21）
+
+- **症状**：`includeHarnessIdentity: false` 已生效（会话日志 `hasIdentity=false`，prompt 20091 字，首句身份句确实消失），但 buddy 依旧全线 400 / 11128。
+- **原因**：腾讯网关做的是**整段结构 + 累积上下文**的组合识别，不是固定词表，且 prompt 里**不止一处**留指纹。命中的是内置插件 `@deepseek-ai/dsh-harness-dev-context`（v0.2.1-rc.2，asar 路径 `dsh/node_modules/@deepseek-ai/dsh-harness-dev-context/lib/index.js`）注册的 `app:web-surface` 段，硬编码 `WEB_SURFACE_PROMPT`：`You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names. When the user refers to "this page", "this GUI", or "this app" ... they mean this GUI. ...`。同插件还注册 `harness:source` 段与两条 runtime context（含 `Current DeepSeek Harness Web GUI URL:` 一行）。该插件**没有 config schema**，row 也无 config 字段，无法用配置开关关段。
+- **判据（真实 20091 字 prompt 直连腾讯网关单变量实测）**：原文 → 400；删 `app:web-surface` 整段（19089 字）→ 200；全文 `GUI`→`界面` → 200；`this GUI`→`this app` → 200；该句 `provides`→`gives` → 仍 400；该段**单独**作为 system 发 → 200；纯中文填充到 25000 字 / 纯英文到 40000 字 → 全 200（不是长度阈值）；真实 prompt 前插 6000 字无害中文 → 仍 400（长度无关）。逐字符二分 BAD 边界正落在 `...they mean this GUI.` 的句点，去掉句点即 200。
+- **解法**：`cordis.patch.yml` 追加整条 row 禁用：`- id: harness-dev-context` + `disabled: true`。**代价**：失去 `harness:source` 段与两条 runtime context（含 GUI URL 那行），不影响工具、文件操作与 GUI 本身；换非腾讯系模型想用回来时删掉或改 `false` 即可。
+- **教训**：同一个网关可能在 prompt 里**多处**留指纹，关掉一处不等于过关。再遇 11128，先全文扫一遍所有 `DeepSeek Harness` 出现点与 `GUI` 结构段，别只盯首句。
+- 来源：2026-10-21 实测；`docs/incidents-2026-10-20.md` §8.8。
 
 ## 四、与 dsh-our-free-model 的版本联动
 
