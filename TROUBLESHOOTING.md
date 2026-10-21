@@ -310,6 +310,15 @@
 - **解法**：不要盲目相信 JSON 状态记录。稳妥方案为将 `settings.json` 与 `upgrade-state.json` 中的版本元数据重置回真实值 `2.5.5`，使升级提示重新激活；或从 feed 重新下载对应版本的 tarball 完整执行物理覆盖安装。
 - **验证**：核对 `pack.js` 实际字节数（2913003 字节对应 2.5.5）及版本特征串；重置元数据后面板恢复升级提示并能重新触发安装。
 - 来源：2026-10-20 实测证据核对；`docs/incidents-2026-10-20.md` 附录 B.1。
+### 2.17 OFM 自动升到 2.5.7 → 补丁集 v3 三处锚点失配整批中止；其中三处补丁应「作废」而非「重锚」（2026-10-21）
+
+- **症状**：面板「测一次」连报 `Rate limit exceeded. Please try again later.` 与 `no eligible anonymous exit; retry after cooldown`；跑 `patch-ofm.mjs --verify` 报 `补丁锚点失配，整批中止`，点名 index.js 三处：`bench-records-a-verdict` / `bench-ttft-from-measured` / `verdict-outlives-the-round`。现役 `package.json` 已是 **2.5.7**（补丁集绑定 2.5.3 基线）。
+- **原因（分两层，别混）**：① 那两条面板文案**本机代码里不存在**——全包 grep 零命中，是上游原样透传：前者 = opencode.ai 网关 429 全池限流（探测台账 `availability.json` 里 11 个模型 8 个同时 throttled），后者 = EAC 网关「匿名出口池全在冷却」。与 4.5 分流表一致，**本机修不了，别为它们动补丁**。② 真正要修的是版本脱钩：2.5.7 把 bench 重构进 `src/core/runtime.js` + `src/model-test.js`，且**原生化了这三处补丁的全部意图**（testModel 自己 `availability.edit(manualResults)+flush`、空答案/无收尾抛 `CODE.empty`、返回铺 `measured.ttftMs`、summary 走原生 `modelAvailability()`）——锚点消失不是上游写坏了，是补丁不再被需要。
+- **解法**：补丁集升 **v4，11 处 → 8 处有效**。index.js 三处在 `lib/ofm-patch.js` 注释作废、标「2.5.7 已原生化」（原文留档备上游回退）；`bench-deadline` 的 330_000 也是上游自己发布的，条目保留仅为 2.5.3 基线重放兼容。http.js 4 处 + eac.js 3 处锚点仍命中，正常重放落盘。新建 `baseline/ofm-2.5.7/`（SHA256SUMS + .gz + README）。**取法备忘**：npm registry 无 2.5.7 包、GitHub 直连超时时，走三路交叉——官方签名 feed manifest（raw main）+ jsdelivr tag v2.5.7 + 现役 marker 扫描（0 命中 = 干净未打，无需还原）；注意发布构建与 tag 源码树差 6 行（上游自己摘除 CodeBuddy/WorkBuddy 渠道），index/client 以**发布包字节**为准。
+- **验证**：`--verify` 8/8「全部已应用，且落盘字节与干净基线重放结果完全一致」exit 0；`node --check lib/ofm-patch.js` 干净；smoke 离线 146 PASS、`OFM_DIR` 指向现役 147 PASS；`eac-body-limit-test.mjs` 32 PASS（真实出网 0 次）。
+- **教训**：① 锚点失配先 diff 上游新版**有没有把补丁意图原生化**——原生化了就作废，硬重锚是往重构后的代码里塞死代码；② 面板报错文案先 grep 安装包，查无此文案 = 上游透传，按 4.5 分流，不动客户端；③ 上游 auto-update 已在 2.5.8 候着，重启 DSH 前后各跑一次 `--verify`，届时按本节流程再导 ofm-2.5.8 基线。
+- 证据强度：A（--verify/smoke/eac-body-limit-test 输出、三路交叉取证哈希、availability.json 台账原文均已上机核验）。
+- 证据：记忆 `0mvhqx7h`（两条透传文案判据）、`0mvdhzzru`（2.5.7 现况）。
 
 ## 三、指纹规范化相关的坑
 

@@ -325,8 +325,15 @@ check('车道主机白名单只列 opencode.ai', /LANE_HOSTS = Object\.freeze\(\
     const sums = readFileSync(root(`baseline/${d}/SHA256SUMS`), 'utf8')
       .trim().split('\n')
       .map(line => { const [hash, name] = line.trim().split(/\s+/); return { hash, name } })
-    // 历史基线保留当时的三文件契约；2.5.3 起才新增 EAC 请求边界补丁。
-    const expectedFiles = d === 'ofm-2.5.3' ? PATCHED_FILES : ['client.js', 'index.js', 'src/http.js']
+    // 历史基线保留当时的契约；2.5.3 起新增 EAC 请求边界补丁。
+    // v4 起 index.js 的三处补丁被 2.5.7 原生化作废，PATCHED_FILES 不再含 index.js，
+    // 所以 2.5.3/2.5.7 的清单契约改为在此显式钉历史形态——基线仍归档 index.js
+    // 的干净原文，上游回退时按 ofm-patch.js 注释块重锚要用。
+    const BASELINE_CONTRACT = {
+      'ofm-2.5.3': ['client.js', 'index.js', 'src/http.js', 'src/eac.js'],
+      'ofm-2.5.7': ['client.js', 'index.js', 'src/http.js', 'src/eac.js'],
+    }
+    const expectedFiles = BASELINE_CONTRACT[d] ?? ['client.js', 'index.js', 'src/http.js']
     check(`${d} 清单列了 ${expectedFiles.length} 个文件`, sums.length === expectedFiles.length, String(sums.length))
     check(`${d} 清单覆盖对应版本的补丁目标文件`,
       sums.map(s => s.name).sort().join() === [...expectedFiles].sort().join(),
@@ -337,7 +344,10 @@ check('车道主机白名单只列 opencode.ai', /LANE_HOSTS = Object\.freeze\(\
       check(`${d} 基线 ${name} 解压后 sha256 与清单一致`, createHash('sha256').update(raw).digest('hex') === hash, name)
     }
   }
-  check('基线不进 files 白名单（档案，不是运行时资产）', !pkg.files.includes('baseline'))
+  // 契约变更（0e5dd69）：baseline 现在**必须**进 files 白名单——安装版里
+  // patch-ofm.mjs 的备份判定与 --verify 重放都要读仓内基线，打包不带基线
+  // 就会把干净文件的备份误落成 .patched-*、--restore 直接失灵。
+  check('基线进 files 白名单（安装版重放/备份判定的依据）', pkg.files.includes('baseline'))
 }
 
 console.log(`\n${pass} PASS / ${fail} FAIL`)
