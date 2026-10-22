@@ -166,6 +166,8 @@
 
 ### 2.7 补丁集清单（7 处，跨 3 个文件）
 
+> **状态（2026-10-23，2.5.9 复核）：本表已过时。** 它是补丁集 v1 时代（7 处）的清单。现行补丁集为 **v4 · 8 处**（`src/http.js` 4 / `src/eac.js` 3 / `vendor/channel-pack/pack.js` 1），现行清单与逐处判据见 **2.18**。
+
 补丁针对的上游症状（EAC 共付车道「测不出首字延迟」是三层叠出来的）：
 
 | id | 文件 | 针对的上游症状 | 修法要点 |
@@ -187,7 +189,7 @@
 - **原因**：**手改过的注释也算补丁**——第一次就栽在这。补丁集没收录它，重放结果自然对不上落盘文件。
 - **解法/验证**：
   1. 拿 `.lane-fix-orig/`（或 `baseline/ofm-2.3.0/`）三份原始文件搭一个干净包 → 跑补丁器 → 与真实落盘结果 `cmp`，**三个文件必须逐字节一致**；
-  2. 再跑一次应报「7 处已应用，0 个文件待改」（幂等）；
+  2. 再跑一次应报「8 处已应用，0 个文件待改」（幂等；补丁集 v4 起是 8 处）；
   3. 破坏性用例要落在**未打补丁的原文**上——对着已应用的文本做 `replace` 会空转，锚点其实还在，用例假绿（冒烟里专门有 `用例自检｜破坏后锚点确实不在了` 防这个）。
 
 ### 2.9 只想查用法，`--help` 却把补丁真打进了运行包
@@ -212,6 +214,8 @@
 
 ### 2.11 换号最小间隔补丁变成空操作（锚点被上游饱和重试分支顶掉，2026-10-18）
 
+> **状态（2026-10-23，2.5.9 复核）：本条作废，不是免除。** 2.5.9 移除 `buddy` / `workbuddy` 渠道，`BuddyAdapter` 整类已删（`pack.js` 内 `BuddyAdapter` / `sleepMs` / `isModelSaturationError` / `buddySaturationDelayMs` 全零命中），本条补丁没有任何落点。上游若将来恢复该渠道，照本条重打。
+
 > 与 4.7 台账的关系：台账第 3 行记的是这条补丁**初次落盘**（`pack.js:35232` 循环内 `await sleepMs(600)`）；本条记的是它**失效后的返工与位置迁移**，两件事，不重复。
 
 - **症状**：补丁报「已应用」、`--verify` 也认，但账号轮换依旧在限流后**数毫秒内**连续换号——原意是「换号之间至少隔 600ms」，实测换号间隔是 0，账号池被打成紧凑循环，同 IP 短时轮换多号（风控关联特征）原样复现。
@@ -224,6 +228,8 @@
 - **教训**：「锚点命中 + 行已改」不等于补丁有效。上游只要在锚点附近插一个恒等变换的分支，`Math.max`、`|| 默认值`、`if (!x) x = …` 这类写法就会静默失效——验证必须验**行为**（换号间隔实测 > 0），不能只验 patch 已应用。
 
 ### 2.12 无权益账号的裸 `4004` 被当成 `INVALID_REQUEST`，摘戳重试落空（2026-10-18）
+
+> **状态（2026-10-23，2.5.9 复核）：本条作废，不是免除。** 2.5.9 移除 `codearts`（华为云）渠道，CodeArts 适配器与 benefit 摘戳那套逻辑随渠道整块删除，本条补丁无落点。上游若恢复该渠道，照本条重打。
 
 > 与 4.7 台账的关系：台账第 5 行记的是补丁**初次落盘**（判定加 `|| data.error_code === "4004"`，`pack.js:33217`）；本条记的是它**为什么必须重打、以及打在哪一层才生效**。
 
@@ -293,6 +299,8 @@
 
 ### 2.15 OFM Chat wire 遗漏 developer 角色报 400（2026-10-19）
 
+> **状态（2026-10-23，2.5.9 复核）：仍然需要，已升格进补丁集。** 2.5.9 的 `pack.js:56153` `convertMessage` 依旧只有 system / user / assistant / tool；Responses 侧上游自己认 developer（`pack.js:56723`）。锚点由 2.5.5 的 `pack.js:63314` 改为 2.5.9 的 `pack.js:56157`（`if (role === "system") {`，全文件唯一），现为补丁集 v4 的 `developer-role-on-chat-wire` 一处，不再手改。详见 2.18。
+
 - **症状**：请求 OFM 渠道时服务端抛错并中断会话：
   ```
   HTTP 400 Unsupported message role: developer
@@ -304,6 +312,8 @@
 - 来源：提交 `0c4a3a7`；记忆库 lesson `0mverqec6`；`docs/ofm-lane-fingerprint-incidents.md` 第七章。
 
 ### 2.16 OFM 2.5.5 与 2.5.7 版本错位：installedVersion 虚报 2.5.7 实际跑 2.5.5（2026-10-20）
+
+> **2026-10-23 复现**：同一毛病在 2.5.5 → 2.5.9 这次升级前又见一轮——`installedVersion` 报 `2.5.7`，真包 `package.json` 是 `2.5.5`。判据永远是**安装目录 `package.json` 的 version + 核心产物字节数**，不是任何 JSON 自报状态。
 
 - **症状**：插件设置面板与状态文件均显示当前已安装版本为 `2.5.7` 且不再提示升级，但运行表现与旧版相同。
 - **原因**：三处证据交叉核对表明真实运行的是 2.5.5 版本：`settings.json` 的 `installedVersion` 虽记为 2.5.7，`upgrade-state.json` 虽记为 `2.5.5 → 2.5.7, activated: true`，但安装目录 `package.json` 的 `version` 仍为 `2.5.5`，核心产物 `pack.js` 为 2913003 字节（真实 2.5.7 应为 2926187 字节）。原因在于升级流程只更新了自报元数据，未真正执行物理文件的覆写替换。
@@ -320,6 +330,50 @@
 - **教训**：① 锚点失配先 diff 上游新版**有没有把补丁意图原生化**——原生化了就作废，硬重锚是往重构后的代码里塞死代码；② 面板报错文案先 grep 安装包，查无此文案 = 上游透传，按 4.5 分流，不动客户端；③ 上游 auto-update 已在 2.5.8 候着，重启 DSH 前后各跑一次 `--verify`，届时按本节流程再导 ofm-2.5.8 基线。
 - 证据强度：A（--verify/smoke/eac-body-limit-test 输出、三路交叉取证哈希、availability.json 台账原文均已上机核验）。
 - 证据：记忆 `0mvhqx7h`（两条透传文案判据）、`0mvdhzzru`（2.5.7 现况）。
+- **2026-10-23 补记（重要）：本节的 v4 / 8 处当时只在文档里成立，代码没落地。** 复核时现役 `lib/ofm-patch.js` 仍是 `PATCH_SET_VERSION = '3'` / 11 处、`baseline/ofm-2.5.7/` 不存在，包内 16 处补丁字节在位 **0 处**。真正升到 v4 是 2.5.9 这一轮，而且构成不同：7 处老补丁（http.js 4 + eac.js 3）+ 新增 1 处 developer，`bench-deadline` 也一并删除（上游自己改成 330s）。看 2.18。
+
+### 2.18 OFM 2.5.9 全量对照：8 处补丁已可免除，补丁集 v3(11) → v4(8)（2026-10-23）
+
+> 本节就是「事故单 ↔ 新版」的对照结论：**上游自己办好、或该渠道已整块下线的，就不再打补丁**。逐条记判据与证据，将来装 2.5.10 / 2.6 若哪一条又跑不通，照本表反向恢复——每条的原始修法仍在它自己那一节，本节不改那些节。
+
+**版本事实**：现役 `package.json` version = `2.5.9`（`settings.json` 的 `installedVersion` 此前虚报 `2.5.7`，同 2.16 那类毛病）。包内 `client.js` / `index.js` / `vendor/channel-pack/pack.js` / `src/http.js` / `src/eac.js` 五份 sha256 与官方 release 附件 `dsh-our-free-model-2.5.9.tgz`（1262168 B，sha256 `3c98427d8144041568c12dd5c61c42632d022856e8f5327e66b813fe80d269a2`）解包件逐一相等。上游不发 npm（registry 停在 2.1.0），版本只走 GitHub tag + release 附件。
+
+**解法（一句话）**：不做 16 处全量重锚——按下面的总账逐条判「上游已自办 / 渠道已下线 → 作废」，只保留 `src/http.js` 4 处 + `src/eac.js` 3 处 + 新增 1 处 `developer-role-on-chat-wire`，补丁集 `v3(11)` → `v4(8)`；`vendor/channel-pack/pack.js` 同时纳入 `PATCHED_FILES`，从此有 marker 判定与 `--restore`。
+
+**总账**：16 处（lane-fix 11 + channel-pack 5）→ **8 处**（`src/http.js` 4 / `src/eac.js` 3 / `vendor/channel-pack/pack.js` 1）。
+
+| 原补丁 | 去处 | 免除判据（2.5.9 实证） |
+| --- | --- | --- |
+| `bench-deadline`（client.js 240s） | 上游自办 | `client.js:6172` 已是 `post('/bench', …, 330_000)`，理由注释在 `:6171` |
+| `bench-records-a-verdict`（index.js） | 上游更优 | 测速搬进 `src/core/runtime.js:343-358`，写 `manualResults` 分表再 `flush()`；我方原写 `results[id]`，会被下一轮探测整个 spread 覆盖 |
+| `bench-ttft-from-measured`（index.js） | 等价内建 | `src/model-test.js:34` 零帧即抛 `CODE.empty`，`:39` 三元的第一支不可达 |
+| `verdict-outlives-the-round`（index.js） | 上游更优 | `src/model-test.js:76-88` 的 `modelAvailability()` 把 `results` / `manualResults` 分表、按 `at` 裁决新旧 |
+| 11128 前置排除（pack.js） | 上游删源 | `isContentRejection` 整块消失；全库只剩 `pack.js:36860` 一处注释提及 11140 |
+| CodeArts content-type 退出签名 | 随渠道下线 | `signRequestHuawei` / `buildCanonicalRequest` / `SignedHeaders` / `maas_type` 全零命中 |
+| benefit 裸 `4004`（pack.js） | 随渠道下线 | 同上（CodeArts 专属判据） |
+| 换号最小间隔（pack.js） | 随渠道下线 | `BuddyAdapter` / `sleepMs` / `isModelSaturationError` / `buddySaturationDelayMs` 全零命中 |
+
+**渠道事实**：2.5.9 移除 `buddy`、`workbuddy`、`codearts` 三个渠道（13 → 10）。本机 `stats.json` 显示实际在用只有 `opencode`（EAC，196 次）与 `minimax`（4 次），三渠道在 stats / session-map / availability / catalog / picks 里全部零命中——砍掉对老大无影响。
+
+**留下的 8 处为什么能原样重打**：`src/http.js`、`src/eac.js`、`src/forward.js`、`src/store.js`、`src/vault.js`、`src/eac-user.js` 两版**字节级一致**，锚点天然命中。这 7 处（http.js 4 + eac.js 3）连缩进都不用改。
+
+**新增的那一处**：`developer-role-on-chat-wire`（`pack.js`）。2.5.9 的 Responses 入站侧自己认 developer（`pack.js:56723` `raw.role === "system" || raw.role === "developer"`），但 Chat 入站的 `convertMessage`（`pack.js:56153`）分支仍只有 system / user / assistant / tool，走到末尾抛 `unsupported message role`。这就是 2.15 那个老毛病，锚点从 2.5.5 的 `pack.js:63314` 挪到 2.5.9 的 `:56157`（`if (role === "system") {`，全文件唯一），现在收进补丁集，不再手改。
+
+**为什么收进补丁集**：lane-fix 以前只手改 `pack.js`（见 4.7），手改不参与 `--verify`、重装即丢——这正是本次复核发现「16 处补丁字节在位 0 处」的直接原因。本次把 `vendor/channel-pack/pack.js` 纳进 `PATCHED_FILES`，并补基线 `baseline/ofm-2.5.9/vendor__channel-pack__pack.js.gz`（原文 sha256 `0a70f2ab6396154121663aa79dddf1fe50710686c61bd6aad3abcb5b9b20592c`，与官方 tgz 一致），从此它和 http.js / eac.js 一样有 marker 判定、重放核对与 `--restore`。
+
+**验证（2026-10-23 实测）**：
+- `node scripts/patch-ofm.mjs --verify` → 8 处全部「已应用」，末行「落盘字节与干净基线重放结果完全一致」，exit 0。
+- `node scripts/smoke.mjs` → **147 PASS / 0 FAIL**。本轮新增一条断言：最新基线清单必须覆盖当前补丁集的全部目标文件（可多不可少——多出来的是暂无补丁、但值得留原文备将来重打的 `client.js` / `index.js`）。
+- `.lane-fix-orig/` 三份原文备份齐（`src__http.js` / `src__eac.js` / `vendor__channel-pack__pack.js`），`--restore` 可用。
+
+**将来装新版怎么走（老大说的「跑不通再打上」）**：
+1. 先只装包、不打补丁：`pnpm install` 换 profile 依赖后重启，直接跑一轮 EAC 出词 + 面板「测一次」。
+2. 有症状再回本表认领条目。`--dry-run` / `--verify` 会直接报哪一处「待应用」或「锚点失配」；**锚点失配先去 diff 上游是否又原生化了**（2.17 的教训），原生化了就继续作废，别硬重锚。
+3. 补丁集要增删，三处必须同步：`PATCHES` 数组、`PATCH_SET_VERSION`、`baseline/ofm-<版本>/SHA256SUMS`。漏了第三处会在基线加载阶段报「基线与补丁集不同步，先补基线再落盘」。
+
+- 证据强度：A（官方 tgz 与安装件逐文件 sha256、`--verify` / `smoke` 输出、`--dry-run` 逐行状态、三渠道零命中 grep 计数均已上机核验）。
+- 附带产物：旧版 2.5.5 整包备份 `D:\Works By DSH\_bak-ofm-2.5.5-pre259-20261023-001908\`；profile 依赖改动前的 `package.json` / `pnpm-lock.yaml` 备份同为 `.bak-ofm259-20261023-002130`。
+
 ## 三、指纹规范化相关的坑
 
 ### 3.1 装了中间层，还是 403 —— 第四道门在传输层
@@ -419,7 +473,7 @@
 
 - **症状**：`includeHarnessIdentity: false` 已生效（会话日志 `hasIdentity=false`，prompt 20091 字，首句身份句确实消失），但 buddy 依旧全线 400 / 11128。
 - **原因**：腾讯网关做的是**整段结构 + 累积上下文**的组合识别，不是固定词表，且 prompt 里**不止一处**留指纹。命中的是内置插件 `@deepseek-ai/dsh-harness-dev-context`（v0.2.1-rc.2，asar 路径 `dsh/node_modules/@deepseek-ai/dsh-harness-dev-context/lib/index.js`）注册的 `app:web-surface` 段，硬编码 `WEB_SURFACE_PROMPT`：`You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names. When the user refers to "this page", "this GUI", or "this app" ... they mean this GUI. ...`。同插件还注册 `harness:source` 段与两条 runtime context（含 `Current DeepSeek Harness Web GUI URL:` 一行）。该插件**没有 config schema**，row 也无 config 字段，无法用配置开关关段。
-- **判据（真实 20091 字 prompt 直连腾讯网关单变量实测）**：原文 → 400；删 `app:web-surface` 整段（19089 字）→ 200；全文 `GUI`→`界面` → 200；`this GUI`→`this app` → 200；该句 `provides`→`gives` → 仍 400；该段**单独**作为 system 发 → 200；纯中文填充到 25000 字 / 纯英文到 40000 字 → 全 200（不是长度阈值）；真实 prompt 前插 6000 字无害中文 → 仍 400（长度无关）。逐字符二分 BAD 边界正落在 `...they mean this GUI.` 的句点，去掉句点即 200。
+- **验证方式（判据来源：真实 20091 字 prompt 直连腾讯网关单变量实测）**：原文 → 400；删 `app:web-surface` 整段（19089 字）→ 200；全文 `GUI`→`界面` → 200；`this GUI`→`this app` → 200；该句 `provides`→`gives` → 仍 400；该段**单独**作为 system 发 → 200；纯中文填充到 25000 字 / 纯英文到 40000 字 → 全 200（不是长度阈值）；真实 prompt 前插 6000 字无害中文 → 仍 400（长度无关）。逐字符二分 BAD 边界正落在 `...they mean this GUI.` 的句点，去掉句点即 200。
 - **解法**：`cordis.patch.yml` 追加整条 row 禁用：`- id: harness-dev-context` + `disabled: true`。**代价**：失去 `harness:source` 段与两条 runtime context（含 GUI URL 那行），不影响工具、文件操作与 GUI 本身；换非腾讯系模型想用回来时删掉或改 `false` 即可。
 - **教训**：同一个网关可能在 prompt 里**多处**留指纹，关掉一处不等于过关。再遇 11128，先全文扫一遍所有 `DeepSeek Harness` 出现点与 `GUI` 结构段，别只盯首句。
 - 来源：2026-10-21 实测；`docs/incidents-2026-10-20.md` §8.8。
@@ -444,6 +498,8 @@
 - **验证**：手工构造一条 `x-opencode-session` 未规范的请求，仍能被拦下改写（`stats().rewrites` 增长）。
 
 ### 4.3 补丁集与基线都绑定 v2.3.0
+
+> **2026-10-23 更新：标题里的 v2.3.0 已过时。** 现行绑定为 **v2.5.9**：`baseline/ofm-2.5.9/`（`client.js` / `index.js` / `src/http.js` / `src/eac.js` / `vendor/channel-pack/pack.js` 五份 + `SHA256SUMS`），补丁集 `PATCH_SET_VERSION = '4'`、8 处。
 
 - **症状**：上游发新版，`--dry-run` 报 `anchor-lost`，或基线校验 `SHA256SUMS` 不匹配。
 - **原因**：补丁锚点、`baseline/ofm-2.3.0/*.gz`、`SHA256SUMS` 三份都绑定在 v2.3.0 上，上游一改这三份就集体对不上（可能要升 `PATCH_SET_VERSION`）。
@@ -484,9 +540,12 @@
 - **症状**：`vendor/channel-pack/` 下看到一串 `pack.js.bak-*`，误以为是 lane-fix 自己留下的备份，或以为改 `src/*.ts` 能生效。
 - **原因**：本机 `vendor/channel-pack/` 下除 `pack.js`（2.88MB，2026-10-16 实测）外还有一串 `pack.js.bak-*` 备份——`bak-ofm-patch-<YYYYMMDD-HHMMSS>`、`bak-codearts-sig-*`、`bak-false-risk-*`、`bak-codearts-diag-*`、`bak-benefit4004-*`，那是围绕**上游渠道适配器构建产物**的另一套补丁工作留下的，命名法与 lane-fix 的 `.lane-fix-orig/` 不同，两回事（完整台账见 4.7）。另外 `pack.js` 是构建产物，改 `src/*.ts` 不生效——但这指的是上游**渠道适配器**那类补丁；lane-fix 补丁集的目标是包根的 `client.js` / `index.js` / `src/http.js`，三者互不替代。
 - **解法**：认准目标文件——lane-fix 只动包根的 `client.js` / `index.js` / `src/http.js`；`vendor/channel-pack/pack.js` 归 4.7 那套渠道补丁台账管，动它前先 `cp` 一份 `pack.js.bak-<用途>-<时间戳>`。
-- **验证**：跑 lane-fix 的 `--dry-run`，它只认那三个文件；`pack.js` 不在 `PATCHED_FILES` 里。
+- **验证**：跑 lane-fix 的 `--dry-run`，看它认哪几个文件。
+- **2026-10-23 更正**：自补丁集 v4 起 `vendor/channel-pack/pack.js` **已进入 `PATCHED_FILES`**（承载 `developer-role-on-chat-wire` 一处），上面「`pack.js` 不在 `PATCHED_FILES` 里」一句已不成立。它现在与 `src/http.js`、`src/eac.js` 同等待遇：有 marker 判定、基线重放核对与 `--restore`。4.7 那套渠道补丁台账（五条）在 2.5.9 已全部无落点，见 2.18。
 
 ### 4.7 channel-pack 渠道补丁台账（2026-10-16/17，五补丁 + 一配置）
+
+> **状态（2026-10-23，2.5.9 复核）：本节五条补丁已全部无落点。** 第 1 条上游 2.5.1 就自建了（见补充 B），且该渠道已删；第 2、3 条随 `buddy` / `workbuddy` 下线消失（`isContentRejection`、`BuddyAdapter` 全零命中）；第 4、5 条随 `codearts` 下线消失。本节保留为历史留档，**别再照它往 2.5.9 上打补丁**——现在 `pack.js` 上的唯一改动是 2.18 那一处 developer。
 
 > 落点全在 `<上游包>/vendor/channel-pack/pack.js`（构建产物）与 `src/` 同名源码，逐处带 `/* patched(小困 …) */` 注释。动 pack.js 前先 `cp` 一份 `pack.js.bak-<用途>-<时间戳>`。改 `src/*.ts` 不生效——运行时读的是 pack.js。
 
