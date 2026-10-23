@@ -157,23 +157,30 @@ const root = findPackage()
 console.log(`补丁集 v${PATCH_SET_VERSION} → ${root}\n`)
 
 if (has('--restore')) {
+  // 先要基线：判断「备份是不是原文」和「连备份都没有的文件是不是本来就干净」都要它。
+  const baseline = loadBaseline(root)
+  if (baseline === null) throw new Error('缺少当前版本干净基线，拒绝回滚')
   const backups = PATCHED_FILES.map(name => ({
     name,
     from: path.join(root, BACKUP_DIR, name.replace(/\//g, '__')),
     to: path.join(root, name),
   }))
-  const missing = backups.filter(row => !fs.existsSync(row.from))
-  if (missing.length > 0) {
-    console.error(`没有备份，无法回滚：${missing.map(row => row.name).join('、')}`)
+  // **没备份 ≠ 无法回滚**：上游自己实现了那一处补丁时（2.5.9 的 bench 超时就是），
+  // 文件内容本来就不需要改，落盘那一步不会给它建备份——此刻也没有东西可恢复。
+  // 只有「没有备份、且内容也不是干净原文」才真的回不去，那才是该拒绝的。
+  // （v6 之前这里是「缺一份就整批拒绝」，于是 2.5.9 上 --restore 永远先撞 client.js。）
+  const orphans = backups.filter(row => !fs.existsSync(row.from)
+    && fs.readFileSync(row.to, 'utf8') !== baseline.files[row.name])
+  if (orphans.length > 0) {
+    console.error(`没有备份，无法回滚：${orphans.map(row => row.name).join('、')}`)
     process.exit(1)
   }
+  const restorable = backups.filter(row => fs.existsSync(row.from))
   // 不把旧版本或已修改状态备份当作原文恢复；全部核对后才允许写入。
-  const baseline = loadBaseline(root)
-  if (baseline === null) throw new Error('缺少当前版本干净基线，拒绝回滚')
-  const invalid = backups.filter(row => fs.readFileSync(row.from, 'utf8') !== baseline.files[row.name])
+  const invalid = restorable.filter(row => fs.readFileSync(row.from, 'utf8') !== baseline.files[row.name])
   if (invalid.length > 0) throw new Error(`备份与当前版本干净基线不符，拒绝回滚：${invalid.map(row => row.name).join('、')}`)
-  for (const row of backups) fs.copyFileSync(row.from, row.to)
-  console.log(`已从 ${BACKUP_DIR}/ 回滚 ${backups.length} 个文件。`)
+  for (const row of restorable) fs.copyFileSync(row.from, row.to)
+  console.log(`已从 ${BACKUP_DIR}/ 回滚 ${restorable.length} 个文件。`)
   process.exit(0)
 }
 

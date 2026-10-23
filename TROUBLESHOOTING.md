@@ -166,7 +166,7 @@
 
 ### 2.7 补丁集清单（7 处，跨 3 个文件）
 
-> **状态（2026-10-23，2.5.9 复核）：本表已过时。** 它是补丁集 v1 时代（7 处）的清单。现行补丁集为 **v4 · 8 处**（`src/http.js` 4 / `src/eac.js` 3 / `vendor/channel-pack/pack.js` 1），现行清单与逐处判据见 **2.18**。
+> **状态（2026-10-23，2.5.9 复核）：本表已过时。** 它是补丁集 v1 时代（7 处）的清单。现行补丁集为 **v6 · 9 处**（`client.js` 1 / `src/http.js` 4 / `src/eac.js` 3 / `vendor/channel-pack/pack.js` 1），现行清单与逐处判据见 **2.18**。
 
 补丁针对的上游症状（EAC 共付车道「测不出首字延迟」是三层叠出来的）：
 
@@ -189,7 +189,7 @@
 - **原因**：**手改过的注释也算补丁**——第一次就栽在这。补丁集没收录它，重放结果自然对不上落盘文件。
 - **解法/验证**：
   1. 拿 `.lane-fix-orig/`（或 `baseline/ofm-2.3.0/`）三份原始文件搭一个干净包 → 跑补丁器 → 与真实落盘结果 `cmp`，**三个文件必须逐字节一致**；
-  2. 再跑一次应报「8 处已应用，0 个文件待改」（幂等；补丁集 v4 起是 8 处）；
+  2. 再跑一次应报「9 处已应用，0 个文件待改」（幂等；补丁集 v6 起是 9 处）；
   3. 破坏性用例要落在**未打补丁的原文**上——对着已应用的文本做 `replace` 会空转，锚点其实还在，用例假绿（冒烟里专门有 `用例自检｜破坏后锚点确实不在了` 防这个）。
 
 ### 2.9 只想查用法，`--help` 却把补丁真打进了运行包
@@ -299,7 +299,7 @@
 
 ### 2.15 OFM Chat wire 遗漏 developer 角色报 400（2026-10-19）
 
-> **状态（2026-10-23，2.5.9 复核）：仍然需要，已升格进补丁集。** 2.5.9 的 `pack.js:56153` `convertMessage` 依旧只有 system / user / assistant / tool；Responses 侧上游自己认 developer（`pack.js:56723`）。锚点由 2.5.5 的 `pack.js:63314` 改为 2.5.9 的 `pack.js:56157`（`if (role === "system") {`，全文件唯一），现为补丁集 v4 的 `developer-role-on-chat-wire` 一处，不再手改。详见 2.18。
+> **状态（2026-10-23 更正，如实记录）：仍然需要；本补丁曾一度只存在于文档里。** 2.5.9 的 `pack.js:56153` `convertMessage` 至今只有 system / user / assistant / tool，末尾 `throw … unsupported message role`；Responses 侧上游自己认 developer（`pack.js:56723`）。文档从 v4 起就写着「已并入补丁集 v4 的 `developer-role-on-chat-wire`、pack.js 已进 `PATCHED_FILES`」，但**代码里没有**：v4/v5 重做时这一条整体漏掉，现役 `lib/ofm-patch.js` 里 `developer` 零命中、`PATCHED_FILES` 不含 `pack.js`，包内 marker 打前 0 处命中——也就是说「不再手改」这句话在 v4/v5 期间是错的，Chat wire 一直没修。**2026-10-23 已补回（补丁集 v6，9 处）**：新增 `developer-role-on-chat-wire`，落盘目标 `vendor/channel-pack/pack.js`（构建产物，改 `src/*.ts` 不生效）。锚点用「函数签名 + 四行前置校验 + `  if (role === "system") {`」整段带上下文，避开全文件 8 处裸 `if (role === "system") {`，实测**唯一命中 1 次**；mark 前 0 / 打后 1。同轮补 `baseline/ofm-2.5.9/vendor__channel-pack__pack.js.gz`（原文 2592919 B，sha256 `0a70f2ab…20592c`），否则 `loadBaseline()` 判「基线与补丁集不同步」。验收：`--verify` 9/9 全绿、smoke 离线 154 PASS / `OFM_DIR` 现役 155 PASS、`eac-body-limit-test` 32 PASS。详见 2.18。
 
 - **症状**：请求 OFM 渠道时服务端抛错并中断会话：
   ```
@@ -307,7 +307,7 @@
   code: INVALID_REQUEST
   ```
 - **原因**：上游 `vendor/channel-pack/pack.js`（及独立版 `packages/standalone/channels/business.mjs`）的 Chat wire `convertMessage()` 仅处理了 `system`、`user`、`assistant`、`tool` 四种角色。而 `developer` 是 DSH 宿主的标准合法会话角色（宿主内置 `createDeveloperMessage`），同文件 Responses wire 与 `src/messages.js` 均已支持该角色，Chat wire 是唯一遗漏分支。
-- **解法**：在 `pack.js:63314` 及 `business.mjs:63303` 将判断条件由 `if (role === "system")` 修改为 `if (role === "system" || role === "developer")`，使 developer 角色与 system 角色共享相同转换逻辑。
+- **解法**：把判断条件由 `if (role === "system")` 改成 `if (role === "system" || role === "developer")`，使 developer 角色与 system 角色共享相同转换逻辑。**行号会随上游版本漂**：2.5.5 是 `pack.js:63314` / `business.mjs:63303`；现役 2.5.9 是 `pack.js:56157`（独立版 18900 那套 `business.mjs` 在 2.5.9 已不随包分发）。**这个文件是构建产物，补丁必须落在 `vendor/channel-pack/pack.js` 上**，改 `src/*.ts` 对运行包无效；且该文件里 `if (role === "system") {` 有 8 处命中，手改 / 重锚都必须带上下文（补丁集 v6 的锚点做法见上面状态块）。同构分支核查：包根 `src/messages.js:196`（`case 'developer'`）与 `:282`/`:363`、`src/anthropic.js:241` 都已认 `system || developer`，全库 `grep 'role === "system"' src/` 零命中——所以这一处只需改 `pack.js`，别去动包根源码。
 - **验证**：重启服务后向独立版 18900 端口发送 `{role: 'developer'}` 测试消息，返回 HTTP 200 且模型正确遵循开发者指令作答；对照组发送非法角色 `{role: 'banana'}` 仍按预期返回 HTTP 400。
 - 来源：提交 `0c4a3a7`；记忆库 lesson `0mverqec6`；`docs/ofm-lane-fingerprint-incidents.md` 第七章。
 
@@ -331,6 +331,7 @@
 - 证据强度：A（--verify/smoke/eac-body-limit-test 输出、三路交叉取证哈希、availability.json 台账原文均已上机核验）。
 - 证据：记忆 `0mvhqx7h`（两条透传文案判据）、`0mvdhzzru`（2.5.7 现况）。
 - **2026-10-23 补记（重要）：本节的 v4 / 8 处当时只在文档里成立，代码没落地。** 复核时现役 `lib/ofm-patch.js` 仍是 `PATCH_SET_VERSION = '3'` / 11 处、`baseline/ofm-2.5.7/` 不存在，包内 16 处补丁字节在位 **0 处**。真正升到 v4 是 2.5.9 这一轮，而且构成不同：7 处老补丁（http.js 4 + eac.js 3）+ 新增 1 处 developer，`bench-deadline` 也一并删除（上游自己改成 330s）。看 2.18。
+- **2026-10-23 再补记（v6）**：上面那句「新增 1 处 developer」同样只在文档里成立——v4/v5 的 `PATCHED_FILES` 里**没有** `pack.js`，`lib/ofm-patch.js` 关于 developer 的代码**零行**。真正把它写进补丁集是 v6（8 → 9 处），同时补了 `baseline/ofm-2.5.9/` 的第五份基线。教训与本段开头同一类：**文档里写「已并入」不算数，判据只有 `PATCHED_FILES` 里有这个文件、`--verify` 报 N/N**。详见 2.15 状态块。
 
 ### 2.18 OFM 2.5.9 全量对照：8 处补丁已可免除，补丁集 v3(11) → v4(8)（2026-10-23）
 
@@ -361,10 +362,12 @@
 
 **为什么收进补丁集**：lane-fix 以前只手改 `pack.js`（见 4.7），手改不参与 `--verify`、重装即丢——这正是本次复核发现「16 处补丁字节在位 0 处」的直接原因。本次把 `vendor/channel-pack/pack.js` 纳进 `PATCHED_FILES`，并补基线 `baseline/ofm-2.5.9/vendor__channel-pack__pack.js.gz`（原文 sha256 `0a70f2ab6396154121663aa79dddf1fe50710686c61bd6aad3abcb5b9b20592c`，与官方 tgz 一致），从此它和 http.js / eac.js 一样有 marker 判定、重放核对与 `--restore`。
 
-**验证（2026-10-23 实测）**：
-- `node scripts/patch-ofm.mjs --verify` → 8 处全部「已应用」，末行「落盘字节与干净基线重放结果完全一致」，exit 0。
-- `node scripts/smoke.mjs` → **147 PASS / 0 FAIL**。本轮新增一条断言：最新基线清单必须覆盖当前补丁集的全部目标文件（可多不可少——多出来的是暂无补丁、但值得留原文备将来重打的 `client.js` / `index.js`）。
+**验证（2026-10-23 实测，v6 更正后的数字）**：
+- `node scripts/patch-ofm.mjs --verify` → **9 处**全部「已应用」，末行「落盘字节与干净基线重放结果完全一致」，exit 0。
+- `node scripts/smoke.mjs` → **154 PASS / 0 FAIL**；`OFM_DIR=<现役包> node scripts/smoke.mjs` → **155 PASS / 0 FAIL**；`node scripts/eac-body-limit-test.mjs` → 32 PASS / 0 FAIL。本轮新增断言两条：最新基线清单必须覆盖当前补丁集的全部目标文件（可多不可少——多出来的是暂无补丁、但值得留原文备将来重打的 `client.js` / `index.js`），以及该轮 EAC 用例改为按目录扫最新基线而非写死 `ofm-2.5.3`。
 - `.lane-fix-orig/` 三份原文备份齐（`src__http.js` / `src__eac.js` / `vendor__channel-pack__pack.js`），`--restore` 可用。
+
+> **2026-10-23 v6 更正（本节 v4 的四处断言当时都不成立，别再照抄）**：① `PATCHED_FILES` 里**没有** `pack.js`，`lib/ofm-patch.js` 关于 developer 的行数为 0——「收进补丁集、不再手改」这句话当时是假的，手改也没做，Chat wire 一直裸奔；② 因此 `--verify` 当时只会报 **8/8**（含 pack.js 的 9 处在 v6 才成立）；③ smoke 当时是 **146/147 PASS**，不是 147/154；④ `.lane-fix-orig/` 当时**只有两份**备份（`src__http.js` / `src__eac.js`），`pack.js` 那份是 v6 落盘时才生成的。v6 实际做的事：补 `PATCHES` 一条 + `PATCHED_FILES` 加 `pack.js` + 补基线 .gz 与 SHA256SUMS 行 + 基线契约与断言同步 + 修 `--restore` 在 2.5.9 上的老毛病（`client.js` 上游自带 `330_000` 因而从不建备份，旧实现「缺一份就整批拒绝」导致回滚永远失败——现改为只对「既无备份、内容又不等于干净原文」的文件报错）。**教训与 2.17 同一条：文档写「已并入」不算数，判据只有 `PATCHED_FILES` 里有这个文件、`--verify` 报 N/N、以及包内 marker 命中 1 次。**
 
 **将来装新版怎么走（老大说的「跑不通再打上」）**：
 1. 先只装包、不打补丁：`pnpm install` 换 profile 依赖后重启，直接跑一轮 EAC 出词 + 面板「测一次」。
@@ -499,7 +502,7 @@
 
 ### 4.3 补丁集与基线都绑定 v2.3.0
 
-> **2026-10-23 更新：标题里的 v2.3.0 已过时。** 现行绑定为 **v2.5.9**：`baseline/ofm-2.5.9/`（`client.js` / `index.js` / `src/http.js` / `src/eac.js` / `vendor/channel-pack/pack.js` 五份 + `SHA256SUMS`），补丁集 `PATCH_SET_VERSION = '4'`、8 处。
+> **2026-10-23 更新：标题里的 v2.3.0 已过时。** 现行绑定为 **v2.5.9**：`baseline/ofm-2.5.9/`（`client.js` / `index.js` / `src/http.js` / `src/eac.js` / `vendor/channel-pack/pack.js` 五份 + `SHA256SUMS`），补丁集 `PATCH_SET_VERSION = '6'`、9 处。
 
 - **症状**：上游发新版，`--dry-run` 报 `anchor-lost`，或基线校验 `SHA256SUMS` 不匹配。
 - **原因**：补丁锚点、`baseline/ofm-2.3.0/*.gz`、`SHA256SUMS` 三份都绑定在 v2.3.0 上，上游一改这三份就集体对不上（可能要升 `PATCH_SET_VERSION`）。
@@ -539,13 +542,13 @@
 
 - **症状**：`vendor/channel-pack/` 下看到一串 `pack.js.bak-*`，误以为是 lane-fix 自己留下的备份，或以为改 `src/*.ts` 能生效。
 - **原因**：本机 `vendor/channel-pack/` 下除 `pack.js`（2.88MB，2026-10-16 实测）外还有一串 `pack.js.bak-*` 备份——`bak-ofm-patch-<YYYYMMDD-HHMMSS>`、`bak-codearts-sig-*`、`bak-false-risk-*`、`bak-codearts-diag-*`、`bak-benefit4004-*`，那是围绕**上游渠道适配器构建产物**的另一套补丁工作留下的，命名法与 lane-fix 的 `.lane-fix-orig/` 不同，两回事（完整台账见 4.7）。另外 `pack.js` 是构建产物，改 `src/*.ts` 不生效——但这指的是上游**渠道适配器**那类补丁；lane-fix 补丁集的目标是包根的 `client.js` / `index.js` / `src/http.js`，三者互不替代。
-- **解法**：认准目标文件——lane-fix 只动包根的 `client.js` / `index.js` / `src/http.js`；`vendor/channel-pack/pack.js` 归 4.7 那套渠道补丁台账管，动它前先 `cp` 一份 `pack.js.bak-<用途>-<时间戳>`。
+- **解法**：认准目标文件——补丁集 v6 的四个目标是包根 `client.js` / `src/http.js` / `src/eac.js` 与 `vendor/channel-pack/pack.js`（`index.js` 自 v4 起只归档不补）；`pack.js` 上的其它历史手改归 4.7 那套渠道台账管（现已全部免除），动它前先 `cp` 一份 `pack.js.bak-<用途>-<时间戳>`。
 - **验证**：跑 lane-fix 的 `--dry-run`，看它认哪几个文件。
-- **2026-10-23 更正**：自补丁集 v4 起 `vendor/channel-pack/pack.js` **已进入 `PATCHED_FILES`**（承载 `developer-role-on-chat-wire` 一处），上面「`pack.js` 不在 `PATCHED_FILES` 里」一句已不成立。它现在与 `src/http.js`、`src/eac.js` 同等待遇：有 marker 判定、基线重放核对与 `--restore`。4.7 那套渠道补丁台账（五条）在 2.5.9 已全部无落点，见 2.18。
+- **2026-10-23 更正（分两拍，别信前一句）**：最初写的是「自 v4 起 `pack.js` 已进 `PATCHED_FILES`」——**这句在 v4/v5 期间是假的**：`lib/ofm-patch.js` 里 `PATCHED_FILES` 只有 `client.js` / `src/http.js` / `src/eac.js`，`developer` 零命中，`pack.js` 一个字节没打。真正生效是**补丁集 v6**：`PATCHED_FILES` 加上 `vendor/channel-pack/pack.js`，补 `baseline/ofm-2.5.9/vendor__channel-pack__pack.js.gz`，`--verify` 从 8/8 变 9/9。它现在与 `src/http.js`、`src/eac.js` 同等待遇：有 marker 判定、基线重放核对与 `--restore`。4.7 那套渠道补丁台账（五条）在 2.5.9 已全部无落点，见 2.18。
 
 ### 4.7 channel-pack 渠道补丁台账（2026-10-16/17，五补丁 + 一配置）
 
-> **状态（2026-10-23，2.5.9 复核）：本节五条补丁已全部无落点。** 第 1 条上游 2.5.1 就自建了（见补充 B），且该渠道已删；第 2、3 条随 `buddy` / `workbuddy` 下线消失（`isContentRejection`、`BuddyAdapter` 全零命中）；第 4、5 条随 `codearts` 下线消失。本节保留为历史留档，**别再照它往 2.5.9 上打补丁**——现在 `pack.js` 上的唯一改动是 2.18 那一处 developer。
+> **状态（2026-10-23，2.5.9 复核）：本节五条补丁已全部无落点、全部免除。** 第 1 条上游 2.5.1 就自建了（见补充 B），且该渠道已删；第 2、3 条随 `buddy` / `workbuddy` 下线消失（`isContentRejection`、`BuddyAdapter` 全零命中）；**第 4、5 条（codearts 的 content-type 退出签名 / benefit 裸 `4004` 判定）随 `codearts` 整条渠道在 2.5.9 被删除而一并免除**——不是修好了，也不是重锚了，是落点连同渠道一起没了：2.5.9 的 `pack.js` 里 `codearts` **零命中**（实测 `grep -c -i codearts` = 0），台账第 5 条对应的 `src/llm-adapter.ts` 这一版也不存在了（2.5.9 的 `src/` 全是 `.js`），往哪儿打都无处可打。本节保留为历史留档，**别再照它往 2.5.9 上打补丁**——现在 `pack.js` 上的唯一改动是补丁集 v6 的 `developer-role-on-chat-wire`（`convertMessage()` 认 developer 角色，见 2.15 / 2.18），由 lane-fix 统一管，不再手改。
 
 > 落点全在 `<上游包>/vendor/channel-pack/pack.js`（构建产物）与 `src/` 同名源码，逐处带 `/* patched(小困 …) */` 注释。动 pack.js 前先 `cp` 一份 `pack.js.bak-<用途>-<时间戳>`。改 `src/*.ts` 不生效——运行时读的是 pack.js。
 

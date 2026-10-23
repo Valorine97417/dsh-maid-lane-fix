@@ -334,7 +334,9 @@ check('车道主机白名单只列 opencode.ai', /LANE_HOSTS = Object\.freeze\(\
       'ofm-2.5.7': ['client.js', 'index.js', 'src/http.js', 'src/eac.js'],
       // v5 对齐 2.5.9：http/eac 上游一字未动（与 2.5.7 逐字节相同），client/index 变了。
       // 契约同 2.5.7——index.js 继续归档备查（三处补丁 RETIRED，上游回退时靠它重锚）。
-      'ofm-2.5.9': ['client.js', 'index.js', 'src/http.js', 'src/eac.js'],
+      // v6 起多一行 `vendor/channel-pack/pack.js`：developer-role 补丁落在构建产物上，
+      // 而 loadBaseline() 要求每个 PATCHED_FILES 成员都有 .gz + 清单行，缺一行就整批拒绝工作。
+      'ofm-2.5.9': ['client.js', 'index.js', 'src/http.js', 'src/eac.js', 'vendor/channel-pack/pack.js'],
     }
     const expectedFiles = BASELINE_CONTRACT[d] ?? ['client.js', 'index.js', 'src/http.js']
     check(`${d} 清单列了 ${expectedFiles.length} 个文件`, sums.length === expectedFiles.length, String(sums.length))
@@ -347,6 +349,17 @@ check('车道主机白名单只列 opencode.ai', /LANE_HOSTS = Object\.freeze\(\
       check(`${d} 基线 ${name} 解压后 sha256 与清单一致`, createHash('sha256').update(raw).digest('hex') === hash, name)
     }
   }
+  // 最新基线的清单必须**覆盖**当前补丁集的全部目标文件（可多不可少：client.js /
+  // index.js 暂无补丁、留原文备将来重打）。这条断言就是 v5 漏掉 developer-role
+  // 那处的守门人——补丁没写、清单自然也没有 pack.js，两处一起漏才会「文档说打过、
+  // 代码里零命中」。基线清单与 PATCHED_FILES 从此互为约束。
+  const latest = dirs[dirs.length - 1]
+  const latestSums = readFileSync(root(`baseline/${latest}/SHA256SUMS`), 'utf8')
+    .trim().split('\n').map(line => line.trim().split(/\s+/)[1])
+  check(`最新基线 ${latest} 覆盖当前补丁集全部目标文件`,
+    PATCHED_FILES.every(name => latestSums.includes(name)),
+    PATCHED_FILES.filter(name => !latestSums.includes(name)).join(' '))
+
   // 契约变更（0e5dd69）：baseline 现在**必须**进 files 白名单——安装版里
   // patch-ofm.mjs 的备份判定与 --verify 重放都要读仓内基线，打包不带基线
   // 就会把干净文件的备份误落成 .patched-*、--restore 直接失灵。

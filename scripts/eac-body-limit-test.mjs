@@ -19,12 +19,18 @@ function cli(...args) {
   return spawnSync(process.execPath, [path.join(repo, 'scripts/patch-ofm.mjs'), '--dir', tmp, ...args], { encoding: 'utf8' })
 }
 const original = {}
+// 基线目录按版本扫、取最新一份：本测试要的只是「同一份干净原文 + 一个能对上
+// baseline/ofm-<版本> 的 package.json」，具体哪一版无所谓（EAC 三处补丁在 2.5.3
+// 起的每份基线上逐字相同）。写死 2.5.3 在 pack.js 进入 PATCHED_FILES 之后会直接
+// ENOENT——那份基线里根本没有 pack.js，而 loadBaseline() 要求成员一个都不能少。
+const baseDir = fs.readdirSync(path.join(repo, 'baseline')).filter(d => /^ofm-\d/.test(d)).sort().at(-1)
+const version = baseDir.replace(/^ofm-/, '')
 for (const name of PATCHED_FILES) {
-  original[name] = gunzipSync(fs.readFileSync(path.join(repo, 'baseline/ofm-2.5.3', name.replaceAll('/', '__') + '.gz'))).toString('utf8')
+  original[name] = gunzipSync(fs.readFileSync(path.join(repo, 'baseline', baseDir, name.replaceAll('/', '__') + '.gz'))).toString('utf8')
   fs.mkdirSync(path.dirname(path.join(tmp, name)), { recursive: true })
   fs.writeFileSync(path.join(tmp, name), original[name])
 }
-fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ type: 'module', version: '2.5.3' }))
+fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ type: 'module', version }))
 const applied = applyPatchSet(original).files
 const oldHttp = http.request, oldHttps = https.request, oldFetch = globalThis.fetch
 let networkAttempts = 0

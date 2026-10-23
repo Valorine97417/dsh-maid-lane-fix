@@ -34,14 +34,17 @@ EAC（共付车道）面板上「测不了首字延迟」是三层叠出来的�
 | 「测一次」按钮卡死 | 前端 bench 超时 240s、后端空闲预算 300s，**差 60s**；而网关每 ~15s 一个 `: keepalive` 注释帧，把「空闲超时」无限续命 → 后端永不放弃、前端先报失败 |
 | 偶尔「测出来了」其实是假的 | 网关会把错误 JSON **裸写**进 SSE（没有 `data:` 前缀），解析器只认 `data:` 行 → 静默丢弃成「0 帧、正常结束」，延迟记成总耗时 |
 
-补丁集（v5：8 处，跨 `client.js` / `src/http.js` / `src/eac.js`；2.5.7 起 index.js 不再补丁——见下）：
+补丁集（v6：9 处，跨 `client.js` / `src/http.js` / `src/eac.js` / `vendor/channel-pack/pack.js`；2.5.7 起 index.js 不再补丁——见下）：
 
 - `bench-deadline` —— 前端超时压过后端，别先于它放弃（2.5.7 起上游自己就写 `330_000`，marker 恰好命中，条目保留只为 2.5.3 基线重放）
 - `idle-clock-witness` / `idle-clock-dispatch` / `idle-clock-rawjson` / `idle-clock-wind` —— **只有真帧能给空闲超时上弦**，`: keepalive` 注释帧不算（见证位 `progressed` 声明、两处置位、循环尾部消费）
 - `eac-body-limit-constant` / `eac-body-limit-before-send` / `eac-413-restated` —— 网关 8 MiB 请求体上限：写成常量、出网前本地拦截说人话、上游 413 再补一句上限
+- `developer-role-on-chat-wire` —— **Chat wire 也认 `developer` 角色**（落在 `vendor/channel-pack/pack.js`，构建产物，改 `src/*.ts` 不生效）：2.5.9 的 `convertMessage()` 只分派 system / user / assistant / tool，宿主一发 developer 就整轮 HTTP 400；同文件 Responses 侧与包根 `src/messages.js` 早就认两个角色。v6 补回——文档在 v4/v5 就写过它，代码一直没落地
 - ~~`bench-records-a-verdict` / `bench-ttft-from-measured` / `verdict-outlives-the-round`~~ —— **v4 作废：2.5.7 已原生化**（上游把 bench 重构进 `src/core/runtime.js` + `src/model-test.js`，测速自己写 `manualResults` 账本、零帧抛 `CODE.empty`、summary 原生读记录；原文注释备查在 `lib/ofm-patch.js`）
 
 > **v5（2026-10-23，对齐 2.5.9）**：auto-update 把包从 2.5.7 顶到 2.5.9，整包覆盖把 v4 的七处落盘**全冲掉**（`--verify` 报 7 处「待应用」）。复核结论是**零重锚**：2.5.9 的 `src/http.js` / `src/eac.js` 与 2.5.7 基线**逐字节相同**（sha256 一致），锚点逐字仍在；上游这一版只动了 `client.js`（前端「视觉特效」开关）与 `index.js`（渠道精简），都不落在锚点上。所以 v5 = 补 `baseline/ofm-2.5.9/` + 重放落盘，补丁内容一字未改。
+
+> **v6（2026-10-23，补回文档写了、代码里丢的那一处）**：v4/v5 的文档（`TROUBLESHOOTING.md` 2.15 / 2.18）把 `developer-role-on-chat-wire` 当成已并入，实际 `lib/ofm-patch.js` 里 `developer` **零命中**、`PATCHED_FILES` 也不含 `pack.js`——现役 `pack.js:56157` 一个字节没改，宿主发 developer 角色照样 400。v6 补回这一处，并同步补基线 `baseline/ofm-2.5.9/vendor__channel-pack__pack.js.gz`（原文 sha256 `0a70f2ab…20592c`，2592919 B）；顺手修了 `--restore` 在 2.5.9 上必然失败的老毛病（见下）。
 
 
 ### 用法
@@ -73,9 +76,9 @@ node scripts/patch-ofm.mjs --help       # 只看用法（v0.3.2 起：不认的�
 | `baseline/ofm-2.5.1/` | v2.5.1 | 191721 字节 |
 | `baseline/ofm-2.5.3/` | v2.5.3（4 份） | 196652 字节 |
 | `baseline/ofm-2.5.7/` | v2.5.7（4 份） | 208047 字节 |
-| `baseline/ofm-2.5.9/` | v2.5.9（现行，4 份） | 200590 字节 |
+| `baseline/ofm-2.5.9/` | v2.5.9（现行，5 份） | 832607 字节 |
 
-每个目录里四份 `*.gz`（`client.js` / `index.js` / `src__http.js` / `src__eac.js`；2.5.3 起含 `index.js`，v4 起它只为「上游回退 bench 重构时重锚」归档）+ 一份 `SHA256SUMS`（全值见该文件），`src__http.js` 的 `__` 是补丁器备份文件的命名法，解出来要放回 `src/http.js`。冒烟脚本按目录扫，**新存一份基线不用改冒烟**，但清单必须与 `PATCHED_FILES` 完全对齐（历史版本的清单契约钉在 `scripts/smoke.mjs` 的 `BASELINE_CONTRACT` 里）、sha256 必须对得上。
+每个目录里四份 `*.gz`（`client.js` / `index.js` / `src__http.js` / `src__eac.js`；2.5.3 起含 `index.js`，v4 起它只为「上游回退 bench 重构时重锚」归档）+ 一份 `SHA256SUMS`（全值见该文件），`src__http.js` 的 `__` 是补丁器备份文件的命名法，解出来要放回 `src/http.js`。**v6 起 `ofm-2.5.9/` 多第五份 `vendor__channel-pack__pack.js.gz`**（`developer-role-on-chat-wire` 落在构建产物 `vendor/channel-pack/pack.js` 上，补丁器要拿它的原文重放）。冒烟脚本按目录扫，**新存一份基线不用改冒烟**，但清单必须与 `PATCHED_FILES` 完全对齐（历史版本的清单契约钉在 `scripts/smoke.mjs` 的 `BASELINE_CONTRACT` 里）、sha256 必须对得上。
 
 ```bash
 # 换成你要的那一版目录
@@ -84,10 +87,11 @@ gunzip -c baseline/ofm-2.5.9/client.js.gz    > "$PKG/client.js"
 gunzip -c baseline/ofm-2.5.9/index.js.gz     > "$PKG/index.js"
 gunzip -c baseline/ofm-2.5.9/src__http.js.gz > "$PKG/src/http.js"
 gunzip -c baseline/ofm-2.5.9/src__eac.js.gz  > "$PKG/src/eac.js"
-node scripts/patch-ofm.mjs --dry-run         # 应报「7 处待应用」（+1 处已应用=上游自带 330_000）= 干净的原文
+gunzip -c baseline/ofm-2.5.9/vendor__channel-pack__pack.js.gz > "$PKG/vendor/channel-pack/pack.js"
+node scripts/patch-ofm.mjs --dry-run         # 应报「8 处待应用」（+1 处已应用=上游自带 330_000）= 干净的原文
 ```
 
-**先确认包版本与基线目录一致**——往别的版本上盖等于换文件。上游发新版后锚点可能已变，要按同法重新导一份（`git archive vX.Y.Z <files> | tar -x`，再 `gzip -9c` 那三个文件），并补上 `SHA256SUMS`。
+**先确认包版本与基线目录一致**——往别的版本上盖等于换文件。上游发新版后锚点可能已变，要按同法重新导一份（`git archive vX.Y.Z <files> | tar -x`，再 `gzip -9c` 那几个文件），并补上 `SHA256SUMS`。
 
 `baseline/` 与 `docs/` 一样**故意不在 `files` 白名单**：`git clone` 看得到、`pnpm add` 装不到——它是档案，不是运行时要用的东西。
 
@@ -129,14 +133,14 @@ dsh plugin --profile desktop add "github:Valorine97417/dsh-maid-lane-fix"
 ## 六、冒烟
 
 ```bash
-node scripts/smoke.mjs                          # 152 条：编码形状、端点改写、工具指纹（含 tools 缺席）、幂等、UA 剥法、越界保护、挂载/卸载、补丁集锚点、还原基线校验
-OFM_DIR=<上游包目录> node scripts/smoke.mjs     # 追加真实上游分支（153 条）：落盘字节必须"全部已应用"
+node scripts/smoke.mjs                          # 154 条：编码形状、端点改写、工具指纹（含 tools 缺席）、幂等、UA 剥法、越界保护、挂载/卸载、补丁集锚点、还原基线校验、基线↔PATCHED_FILES 对齐
+OFM_DIR=<上游包目录> node scripts/smoke.mjs     # 追加真实上游分支（155 条）：落盘字节必须"全部已应用"
 node scripts/eac-body-limit-test.mjs            # 32 条：8 MiB 边界逐字节用例 + 上游 413 文案 + 零真实出网
 ```
 
-补丁器的**重放验证**（决定性）：`--verify` 拿 `baseline/ofm-<版本>/` 的原文在内存里重放同一补丁集，与真实落盘结果**逐字节比对**，不一致就报错保留现场。手工核对的老办法仍然有效：解压基线搭一个干净包 → 跑补丁器 → 与真实落盘 `cmp` 结果逐字节一致；再跑一次是「8 处已应用，0 个文件待改」。**手改过的注释也算补丁**，否则重放对不上——第一次就栽在这。
+补丁器的**重放验证**（决定性）：`--verify` 拿 `baseline/ofm-<版本>/` 的原文在内存里重放同一补丁集，与真实落盘结果**逐字节比对**，不一致就报错保留现场。手工核对的老办法仍然有效：解压基线搭一个干净包 → 跑补丁器 → 与真实落盘 `cmp` 结果逐字节一致；再跑一次是「9 处已应用，0 个文件待改」。**手改过的注释也算补丁**，否则重放对不上——第一次就栽在这。
 
-**还原基线也在冒烟里**：`baseline/ofm-*/*.gz` 按目录逐个解压核 sha256，对的是同目录 `SHA256SUMS`（改基线就得连清单一起改，对不上立刻红）；清单覆盖的文件还必须与 `PATCHED_FILES` 完全对齐。
+**还原基线也在冒烟里**：`baseline/ofm-*/*.gz` 按目录逐个解压核 sha256，对的是同目录 `SHA256SUMS`（改基线就得连清单一起改，对不上立刻红）；清单覆盖的文件还必须与 `PATCHED_FILES` 完全对齐；最新那份基线还必须覆盖当前补丁集的**全部**目标文件（漏存 `pack.js` 这种构建产物，`loadBaseline` 会直接判「基线与补丁集不同步」）。
 
 **端到端验证**（2026-10-14，本机）：
 - 中间层——取上游**未修版** `upstream.js`/`http.js`/`probe.js` 装上本层，带被点名的归属 UA 跑 `probeModel()` → 车道恢复；装前 `❌ UpstreamError`、装后 `✅ 200`，卸载立刻复现 403。
