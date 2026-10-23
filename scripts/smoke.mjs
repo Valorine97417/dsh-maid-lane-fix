@@ -332,6 +332,9 @@ check('车道主机白名单只列 opencode.ai', /LANE_HOSTS = Object\.freeze\(\
     const BASELINE_CONTRACT = {
       'ofm-2.5.3': ['client.js', 'index.js', 'src/http.js', 'src/eac.js'],
       'ofm-2.5.7': ['client.js', 'index.js', 'src/http.js', 'src/eac.js'],
+      // v5 对齐 2.5.9：http/eac 上游一字未动（与 2.5.7 逐字节相同），client/index 变了。
+      // 契约同 2.5.7——index.js 继续归档备查（三处补丁 RETIRED，上游回退时靠它重锚）。
+      'ofm-2.5.9': ['client.js', 'index.js', 'src/http.js', 'src/eac.js'],
     }
     const expectedFiles = BASELINE_CONTRACT[d] ?? ['client.js', 'index.js', 'src/http.js']
     check(`${d} 清单列了 ${expectedFiles.length} 个文件`, sums.length === expectedFiles.length, String(sums.length))
